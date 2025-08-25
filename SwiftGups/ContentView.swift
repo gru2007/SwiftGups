@@ -17,7 +17,7 @@ struct ContentView: View {
     }
 
     var body: some View {
-        Group {
+        SwiftUI.Group {
             if isIPad && !showUserInfo {
                 // iPad расписание без NavigationView (для использования в NavigationSplitView)
                 ScrollView {
