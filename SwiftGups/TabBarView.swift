@@ -8,10 +8,45 @@
 import SwiftUI
 import SwiftData
 
+enum AppTab: String, CaseIterable, Hashable {
+    case schedule = "schedule"
+    case homework = "homework"
+    case news = "news"
+    case profile = "profile"
+    
+    var title: String {
+        switch self {
+        case .schedule: return "Расписание"
+        case .homework: return "Домашние задания"
+        case .news: return "Новости"
+        case .profile: return "Профиль"
+        }
+    }
+    
+    var icon: String {
+        switch self {
+        case .schedule: return "calendar"
+        case .homework: return "book.closed"
+        case .news: return "newspaper"
+        case .profile: return "person.crop.circle"
+        }
+    }
+    
+    var color: Color {
+        switch self {
+        case .schedule: return .blue
+        case .homework: return .green
+        case .news: return .orange
+        case .profile: return .purple
+        }
+    }
+}
+
 struct TabBarView: View {
     let currentUser: User
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
     @Environment(\.verticalSizeClass) private var verticalSizeClass
+    @State private var selectedTab: AppTab = .schedule
     
     private var isIPad: Bool {
         horizontalSizeClass == .regular && verticalSizeClass == .regular
@@ -20,58 +55,46 @@ struct TabBarView: View {
     var body: some View {
         SwiftUI.Group {
             if isIPad {
-                // iPad Layout - используем NavigationSplitView
+                // iPad Layout - используем NavigationSplitView с selection
                 NavigationSplitView {
                     // Sidebar
                     List {
-                        NavigationLink(destination: ScheduleTab(currentUser: currentUser, isInSplitView: true)) {
-                            HStack(spacing: 12) {
-                                Image(systemName: "calendar")
-                                    .foregroundColor(.blue)
-                                    .frame(width: 24, height: 24)
-                                Text("Расписание")
-                                    .font(.headline)
-                                    .foregroundColor(.primary)
-                                Spacer()
+                        ForEach(AppTab.allCases, id: \.self) { tab in
+                            Button(action: {
+                                selectedTab = tab
+                            }) {
+                                HStack(spacing: 16) {
+                                    Image(systemName: tab.icon)
+                                        .foregroundColor(selectedTab == tab ? tab.color : .gray)
+                                        .frame(width: 28, height: 28)
+                                        .font(.title3)
+                                    
+                                    Text(tab.title)
+                                        .font(.headline)
+                                        .foregroundColor(selectedTab == tab ? tab.color : .primary)
+                                    
+                                    Spacer()
+                                }
+                                .padding(.vertical, 12)
+                                .padding(.horizontal, 8)
+                                .background(
+                                    RoundedRectangle(cornerRadius: 10)
+                                        .fill(selectedTab == tab ? tab.color.opacity(0.1) : Color.clear)
+                                )
+                                .contentShape(Rectangle())
                             }
-                            .padding(.vertical, 8)
+                            .buttonStyle(PlainButtonStyle())
+                            .listRowBackground(Color.clear)
+                            .listRowSeparator(.hidden)
                         }
-                        .listRowBackground(Color.clear)
-                        
-                        NavigationLink(destination: HomeworkTab(currentUser: currentUser, isInSplitView: true)) {
-                            HStack(spacing: 12) {
-                                Image(systemName: "book.closed")
-                                    .foregroundColor(.green)
-                                    .frame(width: 24, height: 24)
-                                Text("Домашние задания")
-                                    .font(.headline)
-                                    .foregroundColor(.primary)
-                                Spacer()
-                            }
-                            .padding(.vertical, 8)
-                        }
-                        .listRowBackground(Color.clear)
-                        
-                        NavigationLink(destination: ProfileTab(currentUser: currentUser, isInSplitView: true)) {
-                            HStack(spacing: 12) {
-                                Image(systemName: "person.crop.circle")
-                                    .foregroundColor(.purple)
-                                    .frame(width: 24, height: 24)
-                                Text("Профиль")
-                                    .font(.headline)
-                                    .foregroundColor(.primary)
-                                Spacer()
-                            }
-                            .padding(.vertical, 8)
-                        }
-                        .listRowBackground(Color.clear)
                     }
                     .listStyle(SidebarListStyle())
                     .navigationTitle("SwiftGups")
                     .navigationBarTitleDisplayMode(.large)
+                    .environment(\.defaultMinListRowHeight, 60)
                 } detail: {
-                    // По умолчанию показываем расписание
-                    ScheduleTab(currentUser: currentUser, isInSplitView: true)
+                    // Отображаем выбранную вкладку
+                    selectedTabView
                 }
                 .navigationSplitViewStyle(.balanced)
             } else {
@@ -89,6 +112,12 @@ struct TabBarView: View {
                             Text("Домашние задания")
                         }
                     
+                    NewsTab(isInSplitView: false)
+                        .tabItem {
+                            Image(systemName: "newspaper")
+                            Text("Новости")
+                        }
+                    
                     ProfileTab(currentUser: currentUser, isInSplitView: false)
                         .tabItem {
                             Image(systemName: "person.crop.circle")
@@ -97,6 +126,20 @@ struct TabBarView: View {
                 }
                 .accentColor(.blue)
             }
+        }
+    }
+    
+    @ViewBuilder
+    private var selectedTabView: some View {
+        switch selectedTab {
+        case .schedule:
+            ScheduleTab(currentUser: currentUser, isInSplitView: true)
+        case .homework:
+            HomeworkTab(currentUser: currentUser, isInSplitView: true)
+        case .news:
+            NewsTab(isInSplitView: true)
+        case .profile:
+            ProfileTab(currentUser: currentUser, isInSplitView: true)
         }
     }
 }
@@ -342,17 +385,44 @@ struct HomeworkTab: View {
     @State private var showingLessonTimes = false
     @State private var showingAbout = false
     @State private var selectedFilter: HomeworkFilter = .all
+    @State private var selectedSubject: String = "Все предметы"
+    @State private var homeworkToEdit: Homework? = nil
+    
+    // Все уникальные предметы для фильтрации
+    private var availableSubjects: [String] {
+        let subjects = Set(homeworks.map { $0.subject })
+        return (["Все предметы"] + subjects.sorted()).filter { !$0.isEmpty }
+    }
     
     private var filteredHomeworks: [Homework] {
-        switch selectedFilter {
-        case .all:
-            return homeworks.sorted { $0.dueDate < $1.dueDate }
-        case .pending:
-            return homeworks.filter { !$0.isCompleted }.sorted { $0.dueDate < $1.dueDate }
-        case .completed:
-            return homeworks.filter { $0.isCompleted }.sorted { $0.updatedAt > $1.updatedAt }
-        case .overdue:
-            return homeworks.filter { !$0.isCompleted && $0.dueDate < Date() }.sorted { $0.dueDate < $1.dueDate }
+        let filtered = homeworks.filter { homework in
+            // Фильтр по статусу
+            let statusMatch = switch selectedFilter {
+            case .all: true
+            case .completed: homework.isCompleted
+            case .pending: !homework.isCompleted
+            case .overdue: !homework.isCompleted && homework.dueDate < Date()
+            }
+            
+            // Фильтр по предмету
+            let subjectMatch = selectedSubject == "Все предметы" || homework.subject == selectedSubject
+            
+            return statusMatch && subjectMatch
+        }
+        
+        return filtered.sorted { (lhs: Homework, rhs: Homework) in
+            // Просроченные задания в начале
+            let lhsOverdue = !lhs.isCompleted && lhs.dueDate < Date()
+            let rhsOverdue = !rhs.isCompleted && rhs.dueDate < Date()
+            
+            if lhsOverdue && !rhsOverdue {
+                return true
+            } else if !lhsOverdue && rhsOverdue {
+                return false
+            }
+            
+            // Остальные сортируем по дате сдачи
+            return lhs.dueDate < rhs.dueDate
         }
     }
     
@@ -362,8 +432,44 @@ struct HomeworkTab: View {
                 // iPad layout - без NavigationView
                 VStack(spacing: 0) {
                     // Фильтры
-                    HomeworkFilterBar(selectedFilter: $selectedFilter)
-                        .padding()
+                    VStack(spacing: 12) {
+                        HomeworkFilterBar(selectedFilter: $selectedFilter)
+                        
+                        // Фильтр по предметам
+                        if !availableSubjects.isEmpty {
+                            HStack {
+                                Text("Предмет:")
+                                    .font(.subheadline)
+                                    .foregroundColor(.secondary)
+                                
+                                Spacer()
+                                
+                                Menu {
+                                    ForEach(availableSubjects, id: \.self) { subject in
+                                        Button(subject) {
+                                            selectedSubject = subject
+                                        }
+                                    }
+                                } label: {
+                                    HStack {
+                                        Text(selectedSubject)
+                                            .font(.subheadline)
+                                            .foregroundColor(.primary)
+                                        
+                                        Image(systemName: "chevron.down")
+                                            .font(.caption)
+                                            .foregroundColor(.secondary)
+                                    }
+                                    .padding(.horizontal, 12)
+                                    .padding(.vertical, 8)
+                                    .background(Color(.systemGray6))
+                                    .cornerRadius(8)
+                                }
+                            }
+                            .padding(.horizontal)
+                        }
+                    }
+                    .padding()
                     
                     if filteredHomeworks.isEmpty {
                         EmptyHomeworkView(filter: selectedFilter)
@@ -416,8 +522,44 @@ struct HomeworkTab: View {
                 NavigationView {
                     VStack(spacing: 0) {
                         // Фильтры
-                        HomeworkFilterBar(selectedFilter: $selectedFilter)
-                            .padding()
+                        VStack(spacing: 12) {
+                            HomeworkFilterBar(selectedFilter: $selectedFilter)
+                            
+                            // Фильтр по предметам
+                            if !availableSubjects.isEmpty {
+                                HStack {
+                                    Text("Предмет:")
+                                        .font(.subheadline)
+                                        .foregroundColor(.secondary)
+                                    
+                                    Spacer()
+                                    
+                                    Menu {
+                                        ForEach(availableSubjects, id: \.self) { subject in
+                                            Button(subject) {
+                                                selectedSubject = subject
+                                            }
+                                        }
+                                    } label: {
+                                        HStack {
+                                            Text(selectedSubject)
+                                                .font(.subheadline)
+                                                .foregroundColor(.primary)
+                                            
+                                            Image(systemName: "chevron.down")
+                                                .font(.caption)
+                                                .foregroundColor(.secondary)
+                                        }
+                                        .padding(.horizontal, 12)
+                                        .padding(.vertical, 8)
+                                        .background(Color(.systemGray6))
+                                        .cornerRadius(8)
+                                    }
+                                }
+                                .padding(.horizontal)
+                            }
+                        }
+                        .padding()
                         
                         if filteredHomeworks.isEmpty {
                             EmptyHomeworkView(filter: selectedFilter)
@@ -1180,6 +1322,441 @@ struct EditProfileSheet: View {
         } catch {
             print("Error saving user: \(error)")
         }
+    }
+}
+
+// MARK: - News Tab
+
+struct NewsTab: View {
+    let isInSplitView: Bool
+    @StateObject private var newsAPIClient = DVGUPSNewsAPIClient()
+    @State private var newsItems: [NewsItem] = []
+    @State private var isLoading = false
+    @State private var errorMessage: String?
+    @State private var currentOffset = 0
+    @State private var hasMorePages = true
+    @State private var selectedNewsItem: NewsItem?
+    @Environment(\.horizontalSizeClass) private var horizontalSizeClass
+    
+    private var isIPad: Bool {
+        horizontalSizeClass == .regular
+    }
+    
+    var body: some View {
+        SwiftUI.Group {
+            if isInSplitView {
+                // iPad layout
+                newsContent
+                    .navigationTitle("Новости ДВГУПС")
+                    .navigationBarTitleDisplayMode(.large)
+                    .toolbar {
+                        ToolbarItem(placement: .navigationBarTrailing) {
+                            refreshButton
+                        }
+                    }
+            } else {
+                // iPhone layout
+                NavigationView {
+                    newsContent
+                        .navigationTitle("Новости ДВГУПС")
+                        .navigationBarTitleDisplayMode(.large)
+                        .toolbar {
+                            ToolbarItem(placement: .navigationBarTrailing) {
+                                refreshButton
+                            }
+                        }
+                }
+            }
+        }
+        .task {
+            await loadInitialNews()
+        }
+        .refreshable {
+            await refreshNews()
+        }
+        .sheet(item: $selectedNewsItem) { item in
+            NewsDetailSheet(newsItem: item)
+        }
+    }
+    
+    @ViewBuilder
+    private var newsContent: some View {
+        VStack(spacing: 0) {
+            if let errorMessage = errorMessage {
+                ErrorBanner(message: errorMessage) {
+                    self.errorMessage = nil
+                }
+                .padding(.horizontal)
+                .padding(.top)
+            }
+            
+            if newsItems.isEmpty && isLoading {
+                LoadingNewsView()
+            } else if newsItems.isEmpty {
+                EmptyNewsView() {
+                    Task { await loadInitialNews() }
+                }
+            } else {
+                ScrollView {
+                    LazyVStack(spacing: isIPad ? 20 : 16) {
+                        ForEach(newsItems) { item in
+                            NewsCard(newsItem: item, isCompact: !isIPad) {
+                                selectedNewsItem = item
+                            }
+                        }
+                        
+                        // Пагинация
+                        if hasMorePages {
+                            LoadMoreView(isLoading: isLoading) {
+                                Task { await loadMoreNews() }
+                            }
+                        }
+                    }
+                    .padding(.horizontal, isIPad ? 24 : 16)
+                    .padding(.vertical, isIPad ? 20 : 16)
+                }
+            }
+        }
+    }
+    
+    @ViewBuilder
+    private var refreshButton: some View {
+        Button {
+            Task { await refreshNews() }
+        } label: {
+            Image(systemName: "arrow.clockwise")
+                .foregroundColor(.orange)
+                .rotationEffect(.degrees(isLoading ? 360 : 0))
+                .animation(isLoading ? .linear(duration: 1).repeatForever(autoreverses: false) : .default, value: isLoading)
+        }
+        .disabled(isLoading)
+    }
+    
+    // MARK: - Data Loading
+    
+    private func loadInitialNews() async {
+        guard !isLoading else { return }
+        
+        isLoading = true
+        errorMessage = nil
+        
+        do {
+            let response = try await newsAPIClient.fetchNews(offset: 0)
+            await MainActor.run {
+                self.newsItems = response.items
+                self.currentOffset = response.nextOffset
+                self.hasMorePages = response.hasMorePages
+                self.isLoading = false
+            }
+        } catch {
+            await MainActor.run {
+                self.errorMessage = error.localizedDescription
+                self.isLoading = false
+            }
+        }
+    }
+    
+    private func refreshNews() async {
+        currentOffset = 0
+        await loadInitialNews()
+    }
+    
+    private func loadMoreNews() async {
+        guard !isLoading && hasMorePages else { return }
+        
+        isLoading = true
+        
+        do {
+            let response = try await newsAPIClient.fetchNews(offset: currentOffset)
+            await MainActor.run {
+                self.newsItems.append(contentsOf: response.items)
+                self.currentOffset = response.nextOffset
+                self.hasMorePages = response.hasMorePages
+                self.isLoading = false
+            }
+        } catch {
+            await MainActor.run {
+                self.errorMessage = error.localizedDescription
+                self.isLoading = false
+            }
+        }
+    }
+}
+
+// MARK: - News Components
+
+struct NewsCard: View {
+    let newsItem: NewsItem
+    let isCompact: Bool
+    let action: () -> Void
+    
+    var body: some View {
+        Button(action: {
+            let impactFeedback = UIImpactFeedbackGenerator(style: .light)
+            impactFeedback.impactOccurred()
+            action()
+        }) {
+            VStack(alignment: .leading, spacing: 12) {
+                // Изображение (если есть)
+                if let imageURL = newsItem.imageURL, 
+                   let url = URL(string: imageURL), 
+                   !imageURL.isEmpty {
+                    AsyncImage(url: url) { phase in
+                        switch phase {
+                        case .success(let image):
+                            image
+                                .resizable()
+                                .aspectRatio(contentMode: .fill)
+                                .frame(maxHeight: isCompact ? 120 : 160)
+                                .clipped()
+                                .cornerRadius(12)
+                        case .failure(_):
+                            // Не показываем никакой плейсхолдер при ошибке загрузки
+                            EmptyView()
+                        case .empty:
+                            Rectangle()
+                                .fill(Color.gray.opacity(0.2))
+                                .overlay(
+                                    ProgressView()
+                                        .progressViewStyle(CircularProgressViewStyle())
+                                )
+                                .frame(maxHeight: isCompact ? 120 : 160)
+                                .cornerRadius(12)
+                        @unknown default:
+                            EmptyView()
+                        }
+                    }
+                }
+                
+                // Заголовок
+                Text(newsItem.title)
+                    .font(isCompact ? .headline : .title3)
+                    .fontWeight(.semibold)
+                    .foregroundColor(.primary)
+                    .multilineTextAlignment(.leading)
+                    .lineLimit(3)
+                
+                // Описание
+                if !newsItem.description.isEmpty {
+                    Text(newsItem.description)
+                        .font(.body)
+                        .foregroundColor(.secondary)
+                        .multilineTextAlignment(.leading)
+                        .lineLimit(isCompact ? 3 : 4)
+                }
+                
+                // Футер с датой и просмотрами
+                HStack {
+                    HStack(spacing: 6) {
+                        Image(systemName: "calendar")
+                            .font(.caption)
+                            .foregroundColor(.orange)
+                        
+                        Text(newsItem.date, formatter: NewsItem.displayDateFormatter)
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                    }
+                    
+                    Spacer()
+                    
+                    if newsItem.hits > 0 {
+                        HStack(spacing: 4) {
+                            Image(systemName: "eye")
+                                .font(.caption)
+                                .foregroundColor(.secondary)
+                            
+                            Text("\(newsItem.hits)")
+                                .font(.caption)
+                                .foregroundColor(.secondary)
+                        }
+                    }
+                }
+            }
+            .padding(isCompact ? 16 : 20)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(
+                RoundedRectangle(cornerRadius: 16)
+                    .fill(Color(.systemBackground))
+                    .shadow(color: .black.opacity(0.1), radius: 5, x: 0, y: 2)
+            )
+        }
+        .buttonStyle(PlainButtonStyle())
+    }
+}
+
+struct LoadingNewsView: View {
+    var body: some View {
+        VStack(spacing: 20) {
+            ProgressView()
+                .scaleEffect(1.2)
+                .progressViewStyle(CircularProgressViewStyle(tint: .orange))
+            
+            Text("Загрузка новостей...")
+                .font(.headline)
+                .foregroundColor(.secondary)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .padding(40)
+    }
+}
+
+struct EmptyNewsView: View {
+    let retryAction: () -> Void
+    
+    var body: some View {
+        VStack(spacing: 20) {
+            Image(systemName: "newspaper")
+                .font(.system(size: 60))
+                .foregroundColor(.orange.opacity(0.6))
+            
+            Text("Новости не найдены")
+                .font(.title2)
+                .fontWeight(.semibold)
+                .foregroundColor(.secondary)
+            
+            Text("Попробуйте обновить страницу")
+                .font(.body)
+                .foregroundColor(.secondary)
+                .multilineTextAlignment(.center)
+            
+            Button("Обновить") {
+                retryAction()
+            }
+            .padding(.horizontal, 24)
+            .padding(.vertical, 12)
+            .background(Color.orange)
+            .foregroundColor(.white)
+            .cornerRadius(12)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .padding(40)
+    }
+}
+
+struct LoadMoreView: View {
+    let isLoading: Bool
+    let action: () -> Void
+    
+    var body: some View {
+        VStack(spacing: 16) {
+            if isLoading {
+                ProgressView()
+                    .progressViewStyle(CircularProgressViewStyle(tint: .orange))
+                    .scaleEffect(0.8)
+                
+                Text("Загрузка...")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+            } else {
+                Button("Загрузить ещё") {
+                    action()
+                }
+                .font(.subheadline)
+                .fontWeight(.medium)
+                .padding(.horizontal, 20)
+                .padding(.vertical, 10)
+                .background(Color.orange)
+                .foregroundColor(.white)
+                .cornerRadius(20)
+            }
+        }
+        .padding(.vertical, 20)
+    }
+}
+
+struct NewsDetailSheet: View {
+    let newsItem: NewsItem
+    @Environment(\.dismiss) private var dismiss
+    
+    var body: some View {
+        NavigationView {
+            ScrollView {
+                VStack(alignment: .leading, spacing: 20) {
+                    // Изображение (если есть)
+                    if let imageURL = newsItem.imageURL,
+                       let url = URL(string: imageURL),
+                       !imageURL.isEmpty {
+                        AsyncImage(url: url) { phase in
+                            switch phase {
+                            case .success(let image):
+                                image
+                                    .resizable()
+                                    .aspectRatio(contentMode: .fill)
+                                    .frame(maxHeight: 250)
+                                    .clipped()
+                                    .cornerRadius(16)
+                            case .failure(_):
+                                // Не показываем изображение при ошибке загрузки
+                                EmptyView()
+                            case .empty:
+                                Rectangle()
+                                    .fill(Color.gray.opacity(0.2))
+                                    .overlay(
+                                        ProgressView()
+                                            .progressViewStyle(CircularProgressViewStyle())
+                                    )
+                                    .frame(maxHeight: 250)
+                                    .cornerRadius(16)
+                            @unknown default:
+                                EmptyView()
+                            }
+                        }
+                    }
+                    
+                    // Заголовок
+                    Text(newsItem.title)
+                        .font(.title2)
+                        .fontWeight(.bold)
+                        .foregroundColor(.primary)
+                    
+                    // Мета информация
+                    HStack {
+                        Text(newsItem.date, formatter: NewsItem.displayDateFormatter)
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                        
+                        Spacer()
+                        
+                        if newsItem.hits > 0 {
+                            HStack(spacing: 4) {
+                                Image(systemName: "eye")
+                                    .font(.caption)
+                                Text("\(newsItem.hits)")
+                                    .font(.caption)
+                            }
+                            .foregroundColor(.secondary)
+                        }
+                    }
+                    
+                    Divider()
+                    
+                    // Основной текст
+                    if !newsItem.fullText.isEmpty {
+                        Text(newsItem.fullText)
+                            .font(.body)
+                            .foregroundColor(.primary)
+                    } else {
+                        Text(newsItem.description)
+                            .font(.body)
+                            .foregroundColor(.primary)
+                    }
+                    
+                    Spacer(minLength: 40)
+                }
+                .padding(20)
+            }
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .navigationBarTrailing) {
+                    Button("Закрыть") {
+                        dismiss()
+                    }
+                    .fontWeight(.semibold)
+                }
+            }
+        }
+        .presentationDetents([.large])
+        .presentationDragIndicator(.visible)
     }
 }
 

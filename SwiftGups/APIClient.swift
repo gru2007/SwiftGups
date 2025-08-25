@@ -289,6 +289,145 @@ class DVGUPSAPIClient: ObservableObject {
     private func parseLessons(from tableHtml: String) -> [Lesson] {
         var lessons: [Lesson] = []
         
+        // Упрощенный паттерн для парсинга строк таблицы
+        let rowPattern = #"<tr[^>]*>(.*?)</tr>"#
+        let rowRegex = try? NSRegularExpression(pattern: rowPattern, options: [.dotMatchesLineSeparators])
+        let nsString = tableHtml as NSString
+        let rowResults = rowRegex?.matches(in: tableHtml, options: [], range: NSRange(location: 0, length: nsString.length)) ?? []
+        
+        for rowResult in rowResults {
+            let rowContent = nsString.substring(with: rowResult.range(at: 1))
+            
+            // Парсим отдельные компоненты урока
+            if let lesson = parseIndividualLesson(from: rowContent) {
+                lessons.append(lesson)
+            }
+        }
+        
+        return lessons.sorted { $0.pairNumber < $1.pairNumber }
+    }
+    
+    /// Парсит отдельный урок из HTML строки таблицы
+    private func parseIndividualLesson(from rowContent: String) -> Lesson? {
+        // Парсим номер пары
+        let pairNumberPattern = #"<b[^>]*>\s*(\d+)-я пара\s*</b>"#
+        let pairNumberRegex = try? NSRegularExpression(pattern: pairNumberPattern)
+        let pairNumberMatch = pairNumberRegex?.firstMatch(in: rowContent, range: NSRange(location: 0, length: rowContent.count))
+        
+        guard let pairMatch = pairNumberMatch,
+              let pairRange = Range(pairMatch.range(at: 1), in: rowContent) else {
+            return nil
+        }
+        
+        let pairNumber = Int(String(rowContent[pairRange])) ?? 0
+        
+        // Парсим время
+        let timePattern = #"(\d{2}:\d{2}-\d{2}:\d{2})"#
+        let timeRegex = try? NSRegularExpression(pattern: timePattern)
+        let timeMatch = timeRegex?.firstMatch(in: rowContent, range: NSRange(location: 0, length: rowContent.count))
+        
+        guard let timeMatchResult = timeMatch,
+              let timeRange = Range(timeMatchResult.range(at: 1), in: rowContent) else {
+            return nil
+        }
+        
+        let timeString = String(rowContent[timeRange])
+        let timeComponents = timeString.split(separator: "-")
+        guard timeComponents.count == 2 else { return nil }
+        
+        // Парсим предмет и тип занятия
+        let subjectPattern = #"<div>\(([^)]+)\)\s*([^<]+)</div>"#
+        let subjectRegex = try? NSRegularExpression(pattern: subjectPattern)
+        let subjectMatch = subjectRegex?.firstMatch(in: rowContent, range: NSRange(location: 0, length: rowContent.count))
+        
+        var lessonType = LessonType.lecture
+        var subject = ""
+        
+        if let subjectMatchResult = subjectMatch,
+           let typeRange = Range(subjectMatchResult.range(at: 1), in: rowContent),
+           let subjRange = Range(subjectMatchResult.range(at: 2), in: rowContent) {
+            lessonType = LessonType(from: String(rowContent[typeRange]))
+            subject = String(rowContent[subjRange]).trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+        
+        // Парсим дополнительную информацию (ZOOM, Discord, etc.)
+        let additionalInfoPattern = #"<div>([^<]*(?:ZOOM|Discord|FreeConferenceCall|код доступа|Идентификатор)[^<]*)</div>"#
+        let additionalInfoRegex = try? NSRegularExpression(pattern: additionalInfoPattern, options: [.caseInsensitive])
+        let additionalInfoMatch = additionalInfoRegex?.firstMatch(in: rowContent, range: NSRange(location: 0, length: rowContent.count))
+        
+        var onlineInfo: String? = nil
+        if let additionalInfoMatchResult = additionalInfoMatch,
+           let infoRange = Range(additionalInfoMatchResult.range(at: 1), in: rowContent) {
+            let info = String(rowContent[infoRange])
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+                .replacingOccurrences(of: "\n", with: " ")
+            if !info.isEmpty {
+                onlineInfo = info
+            }
+        }
+        
+        // Парсим аудиторию - ищем в td с wrap
+        let auditoriumPattern = #"<td[^>]*wrap[^>]*>([^<]*)</td>"#
+        let auditoriumRegex = try? NSRegularExpression(pattern: auditoriumPattern)
+        let auditoriumMatch = auditoriumRegex?.firstMatch(in: rowContent, range: NSRange(location: 0, length: rowContent.count))
+        
+        var auditorium: String? = nil
+        if let auditoriumMatchResult = auditoriumMatch,
+           let audRange = Range(auditoriumMatchResult.range(at: 1), in: rowContent) {
+            let aud = String(rowContent[audRange]).trimmingCharacters(in: .whitespacesAndNewlines)
+            if !aud.isEmpty && aud != " " {
+                auditorium = aud
+            }
+        }
+        
+        // Парсим преподавателя
+        let teacherPattern = #"<div>([^<]+?)(?:\s*<a[^>]*href='mailto:([^']+)'[^>]*>&#9993;</a>)?</div>"#
+        let teacherRegex = try? NSRegularExpression(pattern: teacherPattern)
+        
+        var teacher: Teacher? = nil
+        let teacherMatches = teacherRegex?.matches(in: rowContent, options: [], range: NSRange(location: 0, length: rowContent.count)) ?? []
+        
+        // Берем последний матч - обычно это преподаватель
+        if let lastTeacherMatch = teacherMatches.last,
+           let nameRange = Range(lastTeacherMatch.range(at: 1), in: rowContent) {
+            let teacherName = String(rowContent[nameRange]).trimmingCharacters(in: .whitespacesAndNewlines)
+            
+            // Проверяем что это не пустое поле и не другие данные
+            if !teacherName.isEmpty && 
+               teacherName != " " && 
+               !teacherName.contains("wrap") &&
+               !teacherName.contains("БО2") { // исключаем названия групп
+                
+                var teacherEmail: String? = nil
+                if lastTeacherMatch.numberOfRanges > 2,
+                   let emailRange = Range(lastTeacherMatch.range(at: 2), in: rowContent) {
+                    let email = String(rowContent[emailRange]).trimmingCharacters(in: .whitespacesAndNewlines)
+                    if !email.isEmpty {
+                        teacherEmail = email
+                    }
+                }
+                
+                teacher = Teacher(name: teacherName, email: teacherEmail)
+            }
+        }
+        
+        return Lesson(
+            pairNumber: pairNumber,
+            timeStart: String(timeComponents[0]),
+            timeEnd: String(timeComponents[1]),
+            type: lessonType,
+            subject: subject,
+            room: auditorium,
+            teacher: teacher,
+            groups: [],
+            onlineLink: onlineInfo
+        )
+    }
+    
+    // Оригинальная функция как fallback
+    private func parseLessonsOriginal(from tableHtml: String) -> [Lesson] {
+        var lessons: [Lesson] = []
+        
         // Паттерн для парсинга строк таблицы с занятиями
         let lessonPattern = #"<tr[^>]*>.*?<b[^>]*>\s*(\d+)-я пара\s*</b>.*?(\d{2}:\d{2}-\d{2}:\d{2}).*?<div>\(([^)]+)\)\s*([^<]+)</div>.*?<div>([^<]*)</div>.*?wrap>([^<]*)</td>.*?>([^<]*)</td>.*?<div>([^<]*?)(?:<a[^>]*href='mailto:([^']*)'[^>]*>&#9993;</a>)?</div>"#
         
@@ -395,4 +534,141 @@ extension DateFormatter {
         formatter.timeZone = TimeZone(identifier: "Asia/Vladivostok")
         return formatter
     }()
+}
+
+// MARK: - Новости ДВГУПС
+
+/// API клиент для загрузки новостей ДВГУПС
+@MainActor
+class DVGUPSNewsAPIClient: ObservableObject {
+    private let baseURL = "https://www.dvgups.ru/news.php"
+    private let session: URLSession
+    private let itemsPerPage = 10
+    
+    init(session: URLSession = .shared) {
+        self.session = session
+    }
+    
+    /// Загружает новости с поддержкой пагинации
+    func fetchNews(offset: Int = 0) async throws -> NewsResponse {
+        guard let url = URL(string: "\(baseURL)?st=\(offset)") else {
+            throw NewsError.invalidURL
+        }
+        
+        print("🌐 NewsAPIClient.fetchNews() - Offset: \(offset)")
+        
+        var request = URLRequest(url: url)
+        request.setValue("keep-alive", forHTTPHeaderField: "Connection")
+        request.setValue("www.dvgups.ru", forHTTPHeaderField: "Host")
+        request.timeoutInterval = 30
+        
+        do {
+            let (data, response) = try await session.data(for: request)
+            
+            guard let httpResponse = response as? HTTPURLResponse,
+                  httpResponse.statusCode == 200 else {
+                throw NewsError.networkError(URLError(.badServerResponse))
+            }
+            
+            guard let xmlString = String(data: data, encoding: .utf8) else {
+                throw NewsError.noData
+            }
+            
+            let newsItems = try parseNewsXML(xmlString)
+            // Более умная проверка пагинации
+            let hasMorePages = newsItems.count == itemsPerPage && !newsItems.isEmpty
+            let nextOffset = offset + newsItems.count
+            
+            print("✅ Loaded \(newsItems.count) news items, hasMore: \(hasMorePages)")
+            
+            return NewsResponse(items: newsItems, hasMorePages: hasMorePages, nextOffset: nextOffset)
+            
+        } catch {
+            print("❌ Error loading news: \(error)")
+            throw NewsError.networkError(error)
+        }
+    }
+    
+    /// Парсит XML ответ с новостями в RSS формате
+    private func parseNewsXML(_ xml: String) throws -> [NewsItem] {
+        var newsItems: [NewsItem] = []
+        
+        // Регулярные выражения для извлечения данных из XML
+        let itemPattern = #"<item>(.*?)</item>"#
+        let idPattern = #"<id>(\d+)</id>"#
+        let titlePattern = #"<title>(.*?)</title>"#
+        let descriptionPattern = #"<description>(.*?)</description>"#
+        let fullPattern = #"<full>(.*?)</full>"#
+        let imagePattern = #"<imageur><img>(.*?)</img></imageur>"#
+        let datePattern = #"<date>(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})</date>"#
+        let hitsPattern = #"<hits>(\d+)</hits>"#
+        
+        let itemRegex = try NSRegularExpression(pattern: itemPattern, options: [.dotMatchesLineSeparators])
+        let nsString = xml as NSString
+        let matches = itemRegex.matches(in: xml, options: [], range: NSRange(location: 0, length: nsString.length))
+        
+        for match in matches {
+            guard match.numberOfRanges > 1 else { continue }
+            
+            let itemContent = nsString.substring(with: match.range(at: 1))
+            
+            // Извлекаем данные из каждого элемента
+            let id = extractValue(from: itemContent, pattern: idPattern) ?? UUID().uuidString
+            let title = extractValue(from: itemContent, pattern: titlePattern)?.decodingHTMLEntities() ?? ""
+            let description = extractValue(from: itemContent, pattern: descriptionPattern)?.decodingHTMLEntities() ?? ""
+            let fullText = extractValue(from: itemContent, pattern: fullPattern)?.decodingHTMLEntities() ?? ""
+            let imageURL = extractValue(from: itemContent, pattern: imagePattern)
+            let dateString = extractValue(from: itemContent, pattern: datePattern) ?? ""
+            let hitsString = extractValue(from: itemContent, pattern: hitsPattern) ?? "0"
+            
+            // Парсим дату
+            let date = NewsItem.newsDateFormatter.date(from: dateString) ?? Date()
+            let hits = Int(hitsString) ?? 0
+            
+            let newsItem = NewsItem(
+                id: id,
+                title: title,
+                description: description,
+                fullText: fullText,
+                imageURL: imageURL,
+                date: date,
+                hits: hits
+            )
+            
+            newsItems.append(newsItem)
+        }
+        
+        return newsItems
+    }
+    
+    /// Извлекает значение по регулярному выражению
+    private func extractValue(from text: String, pattern: String) -> String? {
+        guard let regex = try? NSRegularExpression(pattern: pattern, options: [.dotMatchesLineSeparators]) else {
+            return nil
+        }
+        
+        let nsString = text as NSString
+        let results = regex.matches(in: text, options: [], range: NSRange(location: 0, length: nsString.length))
+        
+        guard let match = results.first, match.numberOfRanges > 1 else {
+            return nil
+        }
+        
+        return nsString.substring(with: match.range(at: 1))
+    }
+}
+
+// MARK: - HTML Entities Extension
+
+extension String {
+    /// Декодирует HTML entities
+    func decodingHTMLEntities() -> String {
+        return self
+            .replacingOccurrences(of: "&amp;", with: "&")
+            .replacingOccurrences(of: "&lt;", with: "<")
+            .replacingOccurrences(of: "&gt;", with: ">")
+            .replacingOccurrences(of: "&quot;", with: "\"")
+            .replacingOccurrences(of: "&#39;", with: "'")
+            .replacingOccurrences(of: "&nbsp;", with: " ")
+    }
 }

@@ -346,3 +346,78 @@ extension String {
         }
     }
 }
+
+// MARK: - Новости
+
+/// Элемент новостей
+struct NewsItem: Codable, Identifiable, Hashable {
+    let id: String
+    let title: String
+    let description: String
+    let fullText: String
+    let imageURL: String?
+    let date: Date
+    let hits: Int
+    
+    init(id: String, title: String, description: String, fullText: String, imageURL: String?, date: Date, hits: Int = 0) {
+        self.id = id
+        self.title = title
+        self.description = description
+        self.fullText = fullText
+        self.imageURL = imageURL?.isEmpty == false ? imageURL : nil
+        self.date = date
+        self.hits = hits
+    }
+    
+    /// Форматтер для парсинга даты из API новостей
+    static let newsDateFormatter: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.dateFormat = "yyyy-MM-dd HH:mm:ss"
+        formatter.locale = Locale(identifier: "ru_RU")
+        formatter.timeZone = TimeZone(identifier: "Asia/Vladivostok")
+        return formatter
+    }()
+    
+    /// Форматтер для отображения даты новостей пользователю  
+    static let displayDateFormatter: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.dateFormat = "dd MMM yyyy, HH:mm"
+        formatter.locale = Locale(identifier: "ru_RU")
+        formatter.timeZone = TimeZone(identifier: "Asia/Vladivostok")
+        return formatter
+    }()
+}
+
+/// Коллекция новостей с поддержкой пагинации
+struct NewsResponse: Codable {
+    let items: [NewsItem]
+    let hasMorePages: Bool
+    let nextOffset: Int
+    
+    init(items: [NewsItem], hasMorePages: Bool = false, nextOffset: Int = 0) {
+        self.items = items
+        self.hasMorePages = hasMorePages
+        self.nextOffset = nextOffset
+    }
+}
+
+/// Ошибки загрузки новостей
+enum NewsError: Error, LocalizedError {
+    case invalidURL
+    case noData
+    case parseError(String)
+    case networkError(Error)
+    
+    var errorDescription: String? {
+        switch self {
+        case .invalidURL:
+            return "Неверный URL новостей"
+        case .noData:
+            return "Нет данных в ответе сервера"
+        case .parseError(let message):
+            return "Ошибка парсинга новостей: \(message)"
+        case .networkError(let error):
+            return "Ошибка сети: \(error.localizedDescription)"
+        }
+    }
+}
