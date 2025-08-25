@@ -735,6 +735,7 @@ struct HomeworkFilterBar: View {
 struct HomeworkCard: View {
     let homework: Homework
     let toggleAction: () -> Void
+    @State private var showingPhotos = false
     
     private var isOverdue: Bool {
         !homework.isCompleted && homework.dueDate < Date()
@@ -788,6 +789,56 @@ struct HomeworkCard: View {
                     .lineLimit(3)
             }
             
+            // Миниатюры фотографий (если есть)
+            if !homework.imageAttachments.isEmpty {
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 8) {
+                        ForEach(homework.imageAttachments.prefix(3), id: \.self) { attachment in
+                            Button {
+                                showingPhotos = true
+                            } label: {
+                                if let image = AttachmentManager.shared.loadImage(attachment) {
+                                    Image(uiImage: image)
+                                        .resizable()
+                                        .aspectRatio(contentMode: .fill)
+                                        .frame(width: 60, height: 40)
+                                        .clipped()
+                                        .cornerRadius(8)
+                                } else {
+                                    Rectangle()
+                                        .fill(Color.gray.opacity(0.3))
+                                        .frame(width: 60, height: 40)
+                                        .cornerRadius(8)
+                                        .overlay(
+                                            Image(systemName: "photo")
+                                                .foregroundColor(.gray)
+                                        )
+                                }
+                            }
+                        }
+                        
+                        // Показать "+X" если фотографий больше 3
+                        if homework.imageAttachments.count > 3 {
+                            Button {
+                                showingPhotos = true
+                            } label: {
+                                Rectangle()
+                                    .fill(Color.blue.opacity(0.1))
+                                    .frame(width: 60, height: 40)
+                                    .cornerRadius(8)
+                                    .overlay(
+                                        Text("+\(homework.imageAttachments.count - 3)")
+                                            .font(.caption)
+                                            .fontWeight(.semibold)
+                                            .foregroundColor(.blue)
+                                    )
+                            }
+                        }
+                    }
+                    .padding(.horizontal, 2)
+                }
+            }
+            
             HStack {
                 // Приоритет
                 HStack(spacing: 4) {
@@ -802,14 +853,24 @@ struct HomeworkCard: View {
                 
                 // Иконка фотографий (если есть)
                 if !homework.imageAttachments.isEmpty {
-                    HStack(spacing: 4) {
-                        Image(systemName: "photo")
-                            .font(.caption)
-                            .foregroundColor(.blue)
-                        
-                        Text("\(homework.imageAttachments.count)")
-                            .font(.caption)
-                            .foregroundColor(.blue)
+                    Button {
+                        showingPhotos = true
+                    } label: {
+                        HStack(spacing: 4) {
+                            Image(systemName: "photo")
+                                .font(.caption)
+                                .foregroundColor(.blue)
+                            
+                            Text("\(homework.imageAttachments.count)")
+                                .font(.caption)
+                                .foregroundColor(.blue)
+                        }
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 4)
+                        .background(
+                            RoundedRectangle(cornerRadius: 8)
+                                .fill(Color.blue.opacity(0.1))
+                        )
                     }
                 }
                 
@@ -832,6 +893,80 @@ struct HomeworkCard: View {
                         .stroke(isOverdue ? Color.red.opacity(0.3) : Color.clear, lineWidth: 1)
                 )
         )
+        .sheet(isPresented: $showingPhotos) {
+            HomeworkPhotosSheet(homework: homework)
+        }
+    }
+}
+
+// MARK: - Homework Photos Sheet
+
+struct HomeworkPhotosSheet: View {
+    let homework: Homework
+    @Environment(\.dismiss) private var dismiss
+    @State private var selectedImageURL: URL?
+    
+    private let columns = [
+        GridItem(.flexible()),
+        GridItem(.flexible()),
+        GridItem(.flexible())
+    ]
+    
+    var body: some View {
+        NavigationView {
+            ScrollView {
+                LazyVGrid(columns: columns, spacing: 12) {
+                    ForEach(homework.imageAttachments, id: \.self) { attachment in
+                        Button {
+                            selectedImageURL = AttachmentManager.shared.getFileURL(attachment)
+                        } label: {
+                            if let image = AttachmentManager.shared.loadImage(attachment) {
+                                Image(uiImage: image)
+                                    .resizable()
+                                    .aspectRatio(contentMode: .fill)
+                                    .frame(width: 120, height: 120)
+                                    .clipped()
+                                    .cornerRadius(12)
+                            } else {
+                                Rectangle()
+                                    .fill(Color.gray.opacity(0.3))
+                                    .frame(width: 120, height: 120)
+                                    .cornerRadius(12)
+                                    .overlay(
+                                        Image(systemName: "photo")
+                                            .font(.title2)
+                                            .foregroundColor(.gray)
+                                    )
+                            }
+                        }
+                    }
+                }
+                .padding()
+            }
+            .navigationTitle("Фотографии")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .navigationBarLeading) {
+                    Text(homework.title)
+                        .font(.subheadline)
+                        .foregroundColor(.secondary)
+                        .lineLimit(1)
+                }
+                
+                ToolbarItem(placement: .navigationBarTrailing) {
+                    Button("Закрыть") {
+                        dismiss()
+                    }
+                    .fontWeight(.semibold)
+                }
+            }
+        }
+        .sheet(item: Binding<IdentifiableURL?>(
+            get: { selectedImageURL.map(IdentifiableURL.init) },
+            set: { _ in selectedImageURL = nil }
+        )) { identifiableURL in
+            ImageViewerSheet(imageURL: identifiableURL.url)
+        }
     }
 }
 
