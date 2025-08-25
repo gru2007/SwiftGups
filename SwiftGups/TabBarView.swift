@@ -771,6 +771,6 @@ struct EditProfileSheet: View {
     let sampleUser = User(name: "Иван Иванов", facultyId: "2", facultyName: "Институт управления", groupId: "58031", groupName: "БО241ИСТ")
     container.mainContext.insert(sampleUser)
     
-    return TabBarView(currentUser: sampleUser)
+    TabBarView(currentUser: sampleUser)
         .modelContainer(container)
 }

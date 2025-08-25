@@ -1,9 +1,10 @@
 import Foundation
+import SwiftData
 
 // MARK: - Модели данных для расписания вуза
 
 /// Факультет/Институт
-struct Faculty: Codable, Identifiable {
+struct Faculty: Codable, Identifiable, Hashable {
     let id: String
     let name: String
     
@@ -176,6 +177,127 @@ extension Date {
     }()
 }
 
+// MARK: - Модели пользователя и персональных данных
+
+/// Пользователь приложения (хранится локально с SwiftData)
+@Model
+class User {
+    @Attribute(.unique) var id: UUID
+    var name: String
+    var facultyId: String
+    var facultyName: String
+    var groupId: String
+    var groupName: String
+    var createdAt: Date
+    var updatedAt: Date
+    var isFirstTime: Bool
+    
+    init(name: String, facultyId: String, facultyName: String, groupId: String, groupName: String) {
+        self.id = UUID()
+        self.name = name
+        self.facultyId = facultyId
+        self.facultyName = facultyName
+        self.groupId = groupId
+        self.groupName = groupName
+        self.createdAt = Date()
+        self.updatedAt = Date()
+        self.isFirstTime = true
+    }
+    
+    func updateGroup(groupId: String, groupName: String) {
+        self.groupId = groupId
+        self.groupName = groupName
+        self.updatedAt = Date()
+    }
+    
+    func updateFaculty(facultyId: String, facultyName: String) {
+        self.facultyId = facultyId
+        self.facultyName = facultyName
+        self.updatedAt = Date()
+    }
+}
+
+/// Домашнее задание (синхронизируется через iCloud)
+@Model
+class Homework {
+    @Attribute(.unique) var id: UUID
+    var title: String
+    var subject: String
+    var desc: String
+    var dueDate: Date
+    var isCompleted: Bool
+    var createdAt: Date
+    var updatedAt: Date
+    var priority: HomeworkPriority
+    var attachments: [String] // Пути к файлам или ссылки
+    
+    init(title: String, subject: String, description: String, dueDate: Date, priority: HomeworkPriority = .medium) {
+        self.id = UUID()
+        self.title = title
+        self.subject = subject
+        self.desc = description
+        self.dueDate = dueDate
+        self.isCompleted = false
+        self.createdAt = Date()
+        self.updatedAt = Date()
+        self.priority = priority
+        self.attachments = []
+    }
+    
+    func toggle() {
+        isCompleted.toggle()
+        updatedAt = Date()
+    }
+    
+    func addAttachment(_ attachment: String) {
+        attachments.append(attachment)
+        updatedAt = Date()
+    }
+}
+
+/// Приоритет домашнего задания
+enum HomeworkPriority: String, Codable, CaseIterable {
+    case low = "Низкий"
+    case medium = "Средний"
+    case high = "Высокий"
+    case urgent = "Срочный"
+    
+    var color: String {
+        switch self {
+        case .low: return "gray"
+        case .medium: return "blue"
+        case .high: return "orange"
+        case .urgent: return "red"
+        }
+    }
+}
+
+/// Время пар (расписание звонков)
+struct LessonTime: Identifiable, Codable {
+    let id = UUID()
+    let number: Int
+    let startTime: String
+    let endTime: String
+    
+    var timeRange: String {
+        return "\(startTime) - \(endTime)"
+    }
+    
+    /// Стандартное расписание звонков ДВГУПС
+    static let schedule = [
+        LessonTime(number: 1, startTime: "8:05", endTime: "9:35"),
+        LessonTime(number: 2, startTime: "9:50", endTime: "11:20"),
+        LessonTime(number: 3, startTime: "11:35", endTime: "13:05"),
+        LessonTime(number: 4, startTime: "13:35", endTime: "15:05"),
+        LessonTime(number: 5, startTime: "15:15", endTime: "16:45"),
+        LessonTime(number: 6, startTime: "16:55", endTime: "18:25")
+    ]
+    
+    static func timeForPair(_ number: Int) -> LessonTime? {
+        return schedule.first { $0.number == number }
+    }
+}
+
 extension String {
     /// Извлекает email из HTML строки
     func extractEmail() -> String? {
@@ -194,5 +316,29 @@ extension String {
     func stripHTMLTags() -> String {
         return self.replacingOccurrences(of: "<[^>]+>", with: "", options: .regularExpression, range: nil)
             .trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+    
+    /// Проверяет, содержит ли строка URL
+    var containsURL: Bool {
+        let detector = try? NSDataDetector(types: NSTextCheckingResult.CheckingType.link.rawValue)
+        if let detector = detector {
+            let range = NSRange(location: 0, length: self.count)
+            return detector.firstMatch(in: self, options: [], range: range) != nil
+        }
+        return false
+    }
+    
+    /// Извлекает URLs из строки
+    var extractedURLs: [URL] {
+        let detector = try? NSDataDetector(types: NSTextCheckingResult.CheckingType.link.rawValue)
+        guard let detector = detector else { return [] }
+        
+        let range = NSRange(location: 0, length: self.count)
+        let matches = detector.matches(in: self, options: [], range: range)
+        
+        return matches.compactMap { match in
+            guard let range = Range(match.range, in: self) else { return nil }
+            return URL(string: String(self[range]))
+        }
     }
 }
