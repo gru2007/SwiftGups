@@ -11,16 +11,20 @@ import SwiftData
 struct MainAppView: View {
     @Environment(\.modelContext) private var modelContext
     @Query private var users: [User]
+    @StateObject private var cloudKitService = CloudKitService()
     
     var body: some View {
         SwiftUI.Group {
             if let currentUser = users.first {
                 TabBarView(currentUser: currentUser)
+                    .environmentObject(cloudKitService)
             } else {
                 RegistrationView()
+                    .environmentObject(cloudKitService)
             }
         }
         .animation(.easeInOut(duration: 0.3), value: users.count)
+        .cloudKitAlert(cloudKitService)
     }
 }
 
@@ -28,6 +32,7 @@ struct MainAppView: View {
 
 struct RegistrationView: View {
     @Environment(\.modelContext) private var modelContext
+    @EnvironmentObject var cloudKitService: CloudKitService
     @StateObject private var scheduleService = ScheduleService()
     
     @State private var name: String = ""
@@ -80,6 +85,10 @@ struct RegistrationView: View {
                         }
                     }
                     .padding(.top, 40)
+                    
+                    // Статус CloudKit
+                    CloudKitStatusView(cloudKitService: cloudKitService)
+                        .padding(.horizontal, 20)
                     
                     // Форма регистрации
                     VStack(spacing: 24) {
@@ -387,7 +396,14 @@ struct GroupSelectionCard: View {
     let action: () -> Void
     
     var body: some View {
-        Button(action: action) {
+        Button(action: {
+            let impactFeedback = UIImpactFeedbackGenerator(style: .light)
+            impactFeedback.impactOccurred()
+            
+            withAnimation(.easeInOut(duration: 0.2)) {
+                action()
+            }
+        }) {
             VStack(alignment: .leading, spacing: 8) {
                 Text(group.name)
                     .font(.headline)

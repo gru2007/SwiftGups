@@ -34,37 +34,64 @@ class ScheduleService: ObservableObject {
             return
         }
         
+        print("🔄 ScheduleService.loadGroups() started for faculty: \(faculty.id) (\(faculty.name))")
         isLoading = true
         errorMessage = nil
         
         do {
             let fetchedGroups = try await apiClient.fetchGroups(for: faculty.id, date: selectedDate)
+            print("✅ Successfully fetched \(fetchedGroups.count) groups for faculty \(faculty.id)")
             groups = fetchedGroups
             selectedGroup = nil // Сбрасываем выбранную группу
+            
+            if fetchedGroups.isEmpty {
+                print("⚠️ No groups found for faculty \(faculty.id)")
+                errorMessage = "Группы для данного факультета не найдены"
+            }
         } catch {
-            errorMessage = error.localizedDescription
+            print("❌ Error fetching groups: \(error.localizedDescription)")
+            if let apiError = error as? APIError {
+                print("❌ API Error details: \(apiError)")
+                if case .vpnOrBlockedNetwork = apiError {
+                    errorMessage = apiError.localizedDescription
+                } else {
+                    errorMessage = apiError.localizedDescription
+                }
+            } else {
+                errorMessage = error.localizedDescription
+            }
             groups = []
         }
         
         isLoading = false
+        print("🏁 ScheduleService.loadGroups() finished. Groups count: \(groups.count)")
     }
     
     /// Загружает список групп для конкретного факультета
     func loadGroups(for facultyId: String, date: Date? = nil) async {
+        print("🔄 ScheduleService.loadGroups(for: \(facultyId)) started")
         isLoading = true
         errorMessage = nil
         
         do {
             let targetDate = date ?? selectedDate
             let fetchedGroups = try await apiClient.fetchGroups(for: facultyId, date: targetDate)
+            print("✅ Successfully fetched \(fetchedGroups.count) groups for faculty \(facultyId)")
             groups = fetchedGroups
             selectedGroup = nil
+            
+            if fetchedGroups.isEmpty {
+                print("⚠️ No groups found for faculty \(facultyId)")
+                errorMessage = "Группы для данного факультета не найдены"
+            }
         } catch {
+            print("❌ Error fetching groups for faculty \(facultyId): \(error.localizedDescription)")
             errorMessage = error.localizedDescription
             groups = []
         }
         
         isLoading = false
+        print("🏁 ScheduleService.loadGroups(for: \(facultyId)) finished. Groups count: \(groups.count)")
     }
     
     /// Загружает расписание для выбранной группы
@@ -114,6 +141,7 @@ class ScheduleService: ObservableObject {
     
     /// Выбирает факультет и загружает его группы
     func selectFaculty(_ faculty: Faculty) {
+        print("🎯 ScheduleService.selectFaculty() called for: \(faculty.name) (id: \(faculty.id))")
         selectedFaculty = faculty
         selectedGroup = nil
         currentSchedule = nil
@@ -138,13 +166,9 @@ class ScheduleService: ObservableObject {
     func selectDate(_ date: Date) {
         selectedDate = date
         
-        Task {
-            // Перезагружаем группы для новой даты
-            if selectedFaculty != nil {
-                await loadGroups()
-            }
-            
-            // Если группа выбрана, перезагружаем недельное расписание
+        Task { [selectedFaculty, selectedGroup] in
+            // Группы менять не нужно при смене недели — состав групп не зависит от даты
+            // Поэтому перезагружаем только расписание, если группа выбрана
             if selectedGroup != nil {
                 await loadWeekSchedule()
             }
@@ -194,6 +218,7 @@ class ScheduleService: ObservableObject {
         
         isLoading = true
         errorMessage = nil
+        print("📆 Loading week schedule for group: \(group.id) from \(DateFormatter.apiDateFormatter.string(from: startOfWeek)) to \(DateFormatter.apiDateFormatter.string(from: endOfWeek))")
         
         do {
             let schedule = try await apiClient.fetchSchedule(
@@ -202,9 +227,11 @@ class ScheduleService: ObservableObject {
                 endDate: endOfWeek
             )
             currentSchedule = schedule
+            print("✅ Week schedule loaded: days=\(schedule.days.count) group=\(schedule.groupName)")
         } catch {
             errorMessage = error.localizedDescription
             currentSchedule = nil
+            print("❌ Failed to load week schedule: \(error.localizedDescription)")
         }
         
         isLoading = false
@@ -252,8 +279,14 @@ class ScheduleService: ObservableObject {
         return "\(startString) - \(endString)"
     }
     
-    /// Обновляет данные - загружает группы для выбранного факультета
+    /// Обновляет данные - загружает группы и расписание
     func refresh() async {
-        await loadGroups()
+        // Если есть выбранная группа, перезагружаем её расписание
+        if selectedGroup != nil {
+            await loadWeekSchedule()
+        } else if selectedFaculty != nil {
+            // Иначе загружаем группы для выбранного факультета
+            await loadGroups()
+        }
     }
 }

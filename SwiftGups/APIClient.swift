@@ -9,6 +9,7 @@ enum APIError: Error, LocalizedError {
     case invalidResponse
     case groupNotFound
     case facultyNotFound
+    case vpnOrBlockedNetwork
     
     var errorDescription: String? {
         switch self {
@@ -26,6 +27,8 @@ enum APIError: Error, LocalizedError {
             return "Группа не найдена"
         case .facultyNotFound:
             return "Факультет не найден"
+        case .vpnOrBlockedNetwork:
+            return "Не удалось подключиться к серверу. Возможно включен VPN или сеть блокирует доступ к dvgups.ru. Отключите VPN/смените сервер и повторите попытку."
         }
     }
 }
@@ -56,8 +59,21 @@ class DVGUPSAPIClient: ObservableObject {
         let dateString = DateFormatter.apiDateFormatter.string(from: date)
         let requestBody = "FacID=\(facultyId)&GroupID=no&Time=\(dateString)"
         
+        print("🌐 APIClient.fetchGroups() - Faculty: \(facultyId), Date: \(dateString)")
+        print("📤 Request body: \(requestBody)")
+        
         let htmlResponse = try await performRequest(body: requestBody)
-        return parseGroups(from: htmlResponse, facultyId: facultyId)
+        let groups = parseGroups(from: htmlResponse, facultyId: facultyId)
+        
+        print("🔍 Parsed \(groups.count) groups from response")
+        if groups.isEmpty {
+            print("⚠️ No groups found in HTML response for faculty \(facultyId)")
+            // Логируем часть HTML для отладки
+            let preview = String(htmlResponse.prefix(500))
+            print("📄 HTML preview: \(preview)")
+        }
+        
+        return groups
     }
     
     /// Получает расписание для конкретной группы
@@ -111,6 +127,7 @@ class DVGUPSAPIClient: ObservableObject {
         request.setValue("application/x-www-form-urlencoded; charset=UTF-8", forHTTPHeaderField: "Content-Type")
         request.setValue("XMLHttpRequest", forHTTPHeaderField: "X-Requested-With")
         request.httpBody = body.data(using: .utf8)
+        request.timeoutInterval = 20
         
         do {
             let (data, response) = try await session.data(for: request)
@@ -126,6 +143,15 @@ class DVGUPSAPIClient: ObservableObject {
             
             return htmlString
         } catch {
+            if let urlError = error as? URLError {
+                switch urlError.code {
+                case .timedOut, .cannotConnectToHost, .networkConnectionLost, .cannotFindHost, .dnsLookupFailed, .internationalRoamingOff:
+                    // Часто возникает при активном VPN/блокировке
+                    throw APIError.vpnOrBlockedNetwork
+                default:
+                    break
+                }
+            }
             throw APIError.networkError(error)
         }
     }
@@ -141,6 +167,25 @@ class DVGUPSAPIClient: ObservableObject {
         let regex = try? NSRegularExpression(pattern: optionPattern, options: [])
         let nsString = html as NSString
         let results = regex?.matches(in: html, options: [], range: NSRange(location: 0, length: nsString.length)) ?? []
+        
+        print("🔍 Found \(results.count) regex matches for groups pattern")
+        
+        if results.isEmpty {
+            // Попробуем найти любые option теги для отладки
+            let anyOptionPattern = #"<option[^>]*>(.*?)</option>"#
+            let debugRegex = try? NSRegularExpression(pattern: anyOptionPattern, options: [])
+            let debugResults = debugRegex?.matches(in: html, options: [], range: NSRange(location: 0, length: nsString.length)) ?? []
+            print("🐛 Found \(debugResults.count) total option tags in response")
+            
+            // Показываем первые несколько option тегов для отладки
+            for (index, match) in debugResults.prefix(5).enumerated() {
+                if match.numberOfRanges > 0 {
+                    let matchRange = match.range(at: 0)
+                    let matchText = nsString.substring(with: matchRange)
+                    print("🐛 Option \(index + 1): \(matchText)")
+                }
+            }
+        }
         
         for result in results {
             guard result.numberOfRanges == 4 else { continue }
@@ -159,6 +204,7 @@ class DVGUPSAPIClient: ObservableObject {
             
             let group = Group(id: groupId, name: groupName, fullName: fullName, facultyId: facultyId)
             groups.append(group)
+            print("✅ Parsed group: \(groupName) (ID: \(groupId))")
         }
         
         return groups.sorted { $0.name < $1.name }

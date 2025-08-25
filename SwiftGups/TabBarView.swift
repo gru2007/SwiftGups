@@ -10,28 +10,94 @@ import SwiftData
 
 struct TabBarView: View {
     let currentUser: User
+    @Environment(\.horizontalSizeClass) private var horizontalSizeClass
+    @Environment(\.verticalSizeClass) private var verticalSizeClass
+    
+    private var isIPad: Bool {
+        horizontalSizeClass == .regular && verticalSizeClass == .regular
+    }
     
     var body: some View {
-        TabView {
-            ScheduleTab(currentUser: currentUser)
-                .tabItem {
-                    Image(systemName: "calendar")
-                    Text("Расписание")
+        SwiftUI.Group {
+            if isIPad {
+                // iPad Layout - используем NavigationSplitView
+                NavigationSplitView {
+                    // Sidebar
+                    List {
+                        NavigationLink(destination: ScheduleTab(currentUser: currentUser, isInSplitView: true)) {
+                            HStack(spacing: 12) {
+                                Image(systemName: "calendar")
+                                    .foregroundColor(.blue)
+                                    .frame(width: 24, height: 24)
+                                Text("Расписание")
+                                    .font(.headline)
+                                    .foregroundColor(.primary)
+                                Spacer()
+                            }
+                            .padding(.vertical, 8)
+                        }
+                        .listRowBackground(Color.clear)
+                        
+                        NavigationLink(destination: HomeworkTab(currentUser: currentUser, isInSplitView: true)) {
+                            HStack(spacing: 12) {
+                                Image(systemName: "book.closed")
+                                    .foregroundColor(.green)
+                                    .frame(width: 24, height: 24)
+                                Text("Домашние задания")
+                                    .font(.headline)
+                                    .foregroundColor(.primary)
+                                Spacer()
+                            }
+                            .padding(.vertical, 8)
+                        }
+                        .listRowBackground(Color.clear)
+                        
+                        NavigationLink(destination: ProfileTab(currentUser: currentUser, isInSplitView: true)) {
+                            HStack(spacing: 12) {
+                                Image(systemName: "person.crop.circle")
+                                    .foregroundColor(.purple)
+                                    .frame(width: 24, height: 24)
+                                Text("Профиль")
+                                    .font(.headline)
+                                    .foregroundColor(.primary)
+                                Spacer()
+                            }
+                            .padding(.vertical, 8)
+                        }
+                        .listRowBackground(Color.clear)
+                    }
+                    .listStyle(SidebarListStyle())
+                    .navigationTitle("SwiftGups")
+                    .navigationBarTitleDisplayMode(.large)
+                } detail: {
+                    // По умолчанию показываем расписание
+                    ScheduleTab(currentUser: currentUser, isInSplitView: true)
                 }
-            
-            HomeworkTab(currentUser: currentUser)
-                .tabItem {
-                    Image(systemName: "book.closed")
-                    Text("Домашние задания")
+                .navigationSplitViewStyle(.balanced)
+            } else {
+                // iPhone Layout - обычный TabView
+                TabView {
+                    ScheduleTab(currentUser: currentUser, isInSplitView: false)
+                        .tabItem {
+                            Image(systemName: "calendar")
+                            Text("Расписание")
+                        }
+                    
+                    HomeworkTab(currentUser: currentUser, isInSplitView: false)
+                        .tabItem {
+                            Image(systemName: "book.closed")
+                            Text("Домашние задания")
+                        }
+                    
+                    ProfileTab(currentUser: currentUser, isInSplitView: false)
+                        .tabItem {
+                            Image(systemName: "person.crop.circle")
+                            Text("Профиль")
+                        }
                 }
-            
-            ProfileTab(currentUser: currentUser)
-                .tabItem {
-                    Image(systemName: "person.crop.circle")
-                    Text("Профиль")
-                }
+                .accentColor(.blue)
+            }
         }
-        .accentColor(.blue)
     }
 }
 
@@ -39,34 +105,54 @@ struct TabBarView: View {
 
 struct ScheduleTab: View {
     let currentUser: User
+    let isInSplitView: Bool
     @StateObject private var scheduleService = ScheduleService()
     @State private var showingLessonTimes = false
     
     var body: some View {
-        NavigationView {
-            VStack(spacing: 0) {
-                // Заголовок с информацией о пользователе
-                UserInfoHeader(user: currentUser)
-                    .padding()
-                
-                // Основной контент расписания
-                ContentView(scheduleService: scheduleService, showUserInfo: false)
-            }
-            .navigationTitle("Расписание")
-            .navigationBarTitleDisplayMode(.large)
-            .toolbar {
-                ToolbarItem(placement: .navigationBarTrailing) {
-                    Button {
-                        showingLessonTimes = true
-                    } label: {
-                        Image(systemName: "clock")
-                            .foregroundColor(.blue)
+        SwiftUI.Group {
+            if isInSplitView {
+                // iPad layout - без NavigationView (уже в NavigationSplitView)
+                VStack(spacing: 16) {
+                    // Основной контент расписания
+                    ContentView(scheduleService: scheduleService, showUserInfo: false)
+                        .padding(.horizontal)
+                }
+                .navigationTitle("Расписание")
+                .navigationBarTitleDisplayMode(.large)
+                .toolbar {
+                    ToolbarItem(placement: .navigationBarTrailing) {
+                        Button {
+                            showingLessonTimes = true
+                        } label: {
+                            Image(systemName: "clock")
+                                .foregroundColor(.blue)
+                        }
+                    }
+                }
+            } else {
+                // iPhone layout - с NavigationView
+                NavigationView {
+                    VStack(spacing: 12) {
+                        // Основной контент расписания без повторного заголовка/юзер блока
+                        ContentView(scheduleService: scheduleService, showUserInfo: false)
+                            .padding(.horizontal)
+                    }
+                    .toolbar {
+                        ToolbarItem(placement: .navigationBarTrailing) {
+                            Button {
+                                showingLessonTimes = true
+                            } label: {
+                                Image(systemName: "clock")
+                                    .foregroundColor(.blue)
+                            }
+                        }
                     }
                 }
             }
-            .sheet(isPresented: $showingLessonTimes) {
-                LessonTimesSheet()
-            }
+        }
+        .sheet(isPresented: $showingLessonTimes) {
+            LessonTimesSheet()
         }
         .onAppear {
             // Автоматически выбираем факультет и группу пользователя
@@ -75,15 +161,36 @@ struct ScheduleTab: View {
     }
     
     private func setupScheduleForUser() {
-        if let faculty = Faculty.allFaculties.first(where: { $0.id == currentUser.facultyId }) {
-            scheduleService.selectFaculty(faculty)
+        guard let faculty = Faculty.allFaculties.first(where: { $0.id == currentUser.facultyId }) else {
+            print("❌ Faculty not found for user: \(currentUser.facultyId)")
+            return
+        }
+        
+        print("✅ Setting up schedule for user: \(currentUser.name), faculty: \(faculty.name), group: \(currentUser.groupId)")
+        
+        // Устанавливаем факультет напрямую без вызова selectFaculty (чтобы избежать двойной загрузки)
+        scheduleService.selectedFaculty = faculty
+        scheduleService.selectedGroup = nil
+        scheduleService.currentSchedule = nil
+        scheduleService.groups = []
+        
+        // Загружаем группы и затем выбираем нужную
+        Task { @MainActor in
+            print("🔄 Loading groups for faculty: \(faculty.id)")
+            await scheduleService.loadGroups()
             
-            // После загрузки групп, выбираем группу пользователя
-            Task {
-                await scheduleService.loadGroups()
-                
-                if let group = scheduleService.groups.first(where: { $0.id == currentUser.groupId }) {
-                    scheduleService.selectGroup(group)
+            print("📋 Loaded \(scheduleService.groups.count) groups")
+            
+            if let group = scheduleService.groups.first(where: { $0.id == currentUser.groupId }) {
+                print("✅ Found user's group: \(group.name)")
+                scheduleService.selectGroup(group)
+            } else {
+                print("⚠️ User's group not found in loaded groups. Available groups:")
+                for group in scheduleService.groups.prefix(5) {
+                    print("   - \(group.id): \(group.name)")
+                }
+                if let errorMessage = scheduleService.errorMessage {
+                    print("❌ Error loading groups: \(errorMessage)")
                 }
             }
         }
@@ -184,7 +291,43 @@ struct LessonTimesSheet: View {
                 }
             }
         }
-        .presentationDetents([.medium, .large])
+        .presentationDetents([.large])
+    }
+}
+
+// MARK: - About Sheet
+
+struct AboutSheet: View {
+    @Environment(\.dismiss) private var dismiss
+    var body: some View {
+        NavigationView {
+            VStack(alignment: .leading, spacing: 16) {
+                Text("SwiftGups")
+                    .font(.title2)
+                    .fontWeight(.bold)
+                    .padding(.top)
+                    .padding(.horizontal)
+                
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("Версия 1.0")
+                    Text("Неформальное приложение для удобного просмотра расписания ДВГУПС.")
+                        .foregroundColor(.secondary)
+                    Text("Источник данных: dvgups.ru")
+                        .foregroundColor(.secondary)
+                }
+                .padding(.horizontal)
+                
+                Spacer()
+            }
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .navigationBarTrailing) {
+                    Button("Закрыть") { dismiss() }
+                        .fontWeight(.semibold)
+                }
+            }
+        }
+        .presentationDetents([.fraction(0.6), .large])
     }
 }
 
@@ -192,9 +335,12 @@ struct LessonTimesSheet: View {
 
 struct HomeworkTab: View {
     let currentUser: User
+    let isInSplitView: Bool
     @Environment(\.modelContext) private var modelContext
     @Query private var homeworks: [Homework]
     @State private var showingAddHomework = false
+    @State private var showingLessonTimes = false
+    @State private var showingAbout = false
     @State private var selectedFilter: HomeworkFilter = .all
     
     private var filteredHomeworks: [Homework] {
@@ -211,45 +357,126 @@ struct HomeworkTab: View {
     }
     
     var body: some View {
-        NavigationView {
-            VStack(spacing: 0) {
-                // Фильтры
-                HomeworkFilterBar(selectedFilter: $selectedFilter)
-                    .padding()
-                
-                if filteredHomeworks.isEmpty {
-                    EmptyHomeworkView(filter: selectedFilter)
-                        .frame(maxWidth: .infinity, maxHeight: .infinity)
-                } else {
-                    List {
-                        ForEach(filteredHomeworks) { homework in
-                            HomeworkCard(homework: homework) {
-                                homework.toggle()
-                                try? modelContext.save()
+        SwiftUI.Group {
+            if isInSplitView {
+                // iPad layout - без NavigationView
+                VStack(spacing: 0) {
+                    // Фильтры
+                    HomeworkFilterBar(selectedFilter: $selectedFilter)
+                        .padding()
+                    
+                    if filteredHomeworks.isEmpty {
+                        EmptyHomeworkView(filter: selectedFilter)
+                            .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    } else {
+                        List {
+                            ForEach(filteredHomeworks) { homework in
+                                HomeworkCard(homework: homework) {
+                                    homework.toggle()
+                                    try? modelContext.save()
+                                }
+                                .listRowInsets(EdgeInsets(top: 8, leading: 16, bottom: 8, trailing: 16))
+                                .listRowSeparator(.hidden)
                             }
-                            .listRowInsets(EdgeInsets(top: 8, leading: 16, bottom: 8, trailing: 16))
-                            .listRowSeparator(.hidden)
+                            .onDelete(perform: deleteHomework)
                         }
-                        .onDelete(perform: deleteHomework)
-                    }
-                    .listStyle(PlainListStyle())
-                }
-            }
-            .navigationTitle("Домашние задания")
-            .navigationBarTitleDisplayMode(.large)
-            .toolbar {
-                ToolbarItem(placement: .navigationBarTrailing) {
-                    Button {
-                        showingAddHomework = true
-                    } label: {
-                        Image(systemName: "plus")
-                            .foregroundColor(.blue)
+                        .listStyle(PlainListStyle())
                     }
                 }
+                .navigationTitle("Домашние задания")
+                .navigationBarTitleDisplayMode(.large)
+                .toolbar {
+                    ToolbarItem(placement: .navigationBarTrailing) {
+                        HStack {
+                            Button {
+                                showingLessonTimes = true
+                            } label: {
+                                Image(systemName: "clock")
+                                    .foregroundColor(.blue)
+                            }
+                            
+                            Button {
+                                showingAbout = true
+                            } label: {
+                                Image(systemName: "info.circle")
+                                    .foregroundColor(.blue)
+                            }
+                            
+                            Button {
+                                showingAddHomework = true
+                            } label: {
+                                Image(systemName: "plus")
+                                    .foregroundColor(.blue)
+                            }
+                        }
+                    }
+                }
+            } else {
+                // iPhone layout - с NavigationView
+                NavigationView {
+                    VStack(spacing: 0) {
+                        // Фильтры
+                        HomeworkFilterBar(selectedFilter: $selectedFilter)
+                            .padding()
+                        
+                        if filteredHomeworks.isEmpty {
+                            EmptyHomeworkView(filter: selectedFilter)
+                                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                        } else {
+                            List {
+                                ForEach(filteredHomeworks) { homework in
+                                    HomeworkCard(homework: homework) {
+                                        homework.toggle()
+                                        try? modelContext.save()
+                                    }
+                                    .listRowInsets(EdgeInsets(top: 8, leading: 16, bottom: 8, trailing: 16))
+                                    .listRowSeparator(.hidden)
+                                }
+                                .onDelete(perform: deleteHomework)
+                            }
+                            .listStyle(PlainListStyle())
+                        }
+                    }
+                    .navigationTitle("Домашние задания")
+                    .navigationBarTitleDisplayMode(.large)
+                    .toolbar {
+                        ToolbarItem(placement: .navigationBarTrailing) {
+                            Button {
+                                showingAddHomework = true
+                            } label: {
+                                Image(systemName: "plus")
+                                    .foregroundColor(.blue)
+                            }
+                        }
+                        ToolbarItem(placement: .navigationBarLeading) {
+                            Menu {
+                                Button {
+                                    showingLessonTimes = true
+                                } label: {
+                                    Label("Расписание звонков", systemImage: "clock")
+                                }
+                                Button {
+                                    showingAbout = true
+                                } label: {
+                                    Label("О приложении", systemImage: "info.circle")
+                                }
+                            } label: {
+                                Image(systemName: "ellipsis.circle")
+                                    .foregroundColor(.blue)
+                            }
+                        }
+                    }
+                }
             }
-            .sheet(isPresented: $showingAddHomework) {
-                AddHomeworkSheet()
-            }
+        }
+        .sheet(isPresented: $showingAddHomework) {
+            AddHomeworkSheet()
+        }
+        .sheet(isPresented: $showingLessonTimes) {
+            LessonTimesSheet()
+        }
+        .sheet(isPresented: $showingAbout) {
+            AboutSheet()
         }
     }
     
@@ -346,10 +573,18 @@ struct HomeworkCard: View {
                 
                 Spacer()
                 
-                Button(action: toggleAction) {
+                Button(action: {
+                    let impactFeedback = UIImpactFeedbackGenerator(style: .medium)
+                    impactFeedback.impactOccurred()
+                    
+                    withAnimation(.easeInOut(duration: 0.2)) {
+                        toggleAction()
+                    }
+                }) {
                     Image(systemName: homework.isCompleted ? "checkmark.circle.fill" : "circle")
                         .font(.title2)
                         .foregroundColor(homework.isCompleted ? .green : .gray)
+                        .symbolEffect(.bounce, value: homework.isCompleted)
                 }
             }
             
@@ -435,19 +670,86 @@ struct EmptyHomeworkView: View {
 struct AddHomeworkSheet: View {
     @Environment(\.dismiss) private var dismiss
     @Environment(\.modelContext) private var modelContext
+    @Query private var existingHomeworks: [Homework]
     
     @State private var title = ""
     @State private var subject = ""
     @State private var description = ""
     @State private var dueDate = Date()
     @State private var priority = HomeworkPriority.medium
+    @State private var suggestedSubjects: [String] = []
+    @State private var showSuggestions = false
+    @AppStorage("subjectPresets") private var subjectPresetsStorage: String = ""
     
     var body: some View {
         NavigationView {
             Form {
                 Section("Основная информация") {
                     TextField("Название задания", text: $title)
-                    TextField("Предмет", text: $subject)
+                    VStack(alignment: .leading, spacing: 8) {
+                        TextField("Предмет", text: $subject)
+                            .textFieldStyle(RoundedBorderTextFieldStyle())
+                            .onChange(of: subject) { newValue in
+                                updateSuggestions(for: newValue)
+                            }
+                            .onTapGesture {
+                                if subject.isEmpty {
+                                    updateSuggestions(for: "")
+                                }
+                            }
+                        
+                        if showSuggestions && !suggestedSubjects.isEmpty {
+                            VStack(alignment: .leading, spacing: 8) {
+                                Text("Предметы:")
+                                    .font(.caption)
+                                    .foregroundColor(.secondary)
+                                
+                                LazyVGrid(columns: Array(repeating: GridItem(.flexible()), count: 2), spacing: 8) {
+                                    ForEach(suggestedSubjects.prefix(8), id: \.self) { item in
+                                        Button(action: { 
+                                            subject = item
+                                            showSuggestions = false
+                                            // Haptic feedback
+                                            let impactFeedback = UIImpactFeedbackGenerator(style: .light)
+                                            impactFeedback.impactOccurred()
+                                        }) {
+                                            HStack {
+                                                Text(item)
+                                                    .font(.subheadline)
+                                                    .foregroundColor(.primary)
+                                                Spacer()
+                                                Image(systemName: "plus.circle.fill")
+                                                    .foregroundColor(.blue)
+                                                    .font(.caption)
+                                            }
+                                            .padding(.horizontal, 12)
+                                            .padding(.vertical, 8)
+                                            .background(
+                                                RoundedRectangle(cornerRadius: 8)
+                                                    .fill(Color(.systemGray6))
+                                                    .overlay(
+                                                        RoundedRectangle(cornerRadius: 8)
+                                                            .stroke(Color.blue.opacity(0.3), lineWidth: 1)
+                                                    )
+                                            )
+                                        }
+                                    }
+                                }
+                                
+                                if suggestedSubjects.count > 8 {
+                                    Text("И еще \(suggestedSubjects.count - 8) предметов...")
+                                        .font(.caption2)
+                                        .foregroundColor(.secondary)
+                                        .padding(.top, 4)
+                                }
+                            }
+                            .padding()
+                            .background(
+                                RoundedRectangle(cornerRadius: 12)
+                                    .fill(Color(.systemGray5).opacity(0.3))
+                            )
+                        }
+                    }
                 }
                 
                 Section("Описание") {
@@ -480,7 +782,7 @@ struct AddHomeworkSheet: View {
                         saveHomework()
                     }
                     .fontWeight(.semibold)
-                    .disabled(title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                    .disabled(title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || subject.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                 }
             }
         }
@@ -499,10 +801,49 @@ struct AddHomeworkSheet: View {
         
         do {
             try modelContext.save()
+            persistSubjectPreset()
             dismiss()
         } catch {
             print("Error saving homework: \(error)")
         }
+    }
+
+    private func updateSuggestions(for text: String) {
+        // Получаем предметы из существующих домашних заданий
+        let existingSubjects = Set(existingHomeworks.map { $0.subject.trimmingCharacters(in: .whitespacesAndNewlines) })
+            .filter { !$0.isEmpty }
+        
+        // Получаем сохраненные предметы
+        let stored = subjectPresetsStorage.split(separator: "|").map { String($0) }
+        
+        // Базовые предметы
+        let baseDefaults: [String] = [
+            "Математика","Физика","Информатика","Экономика","История",
+            "Английский язык","Программирование","Сети","Алгоритмы",
+            "Базы данных","Операционные системы","ОП ИИ"
+        ]
+        
+        // Объединяем все источники предметов
+        let allSubjects = Array(Set(Array(existingSubjects) + stored + baseDefaults))
+            .filter { !$0.isEmpty }
+            .sorted()
+        
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        if trimmed.isEmpty {
+            suggestedSubjects = allSubjects
+            showSuggestions = true
+        } else {
+            suggestedSubjects = allSubjects.filter { $0.localizedCaseInsensitiveContains(trimmed) }
+            showSuggestions = !suggestedSubjects.isEmpty
+        }
+    }
+
+    private func persistSubjectPreset() {
+        let value = subject.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !value.isEmpty else { return }
+        var existing = Set(subjectPresetsStorage.split(separator: "|").map { String($0) })
+        existing.insert(value)
+        subjectPresetsStorage = existing.sorted().joined(separator: "|")
     }
 }
 
@@ -510,58 +851,126 @@ struct AddHomeworkSheet: View {
 
 struct ProfileTab: View {
     let currentUser: User
+    let isInSplitView: Bool
     @Environment(\.modelContext) private var modelContext
+    @EnvironmentObject var cloudKitService: CloudKitService
     @State private var showingEditProfile = false
     @State private var showingDeleteConfirmation = false
+    @State private var showingLessonTimes = false
+    @State private var showingAbout = false
     
     var body: some View {
-        NavigationView {
-            ScrollView {
-                VStack(spacing: 24) {
-                    // Профиль пользователя
-                    ProfileHeader(user: currentUser)
-                        .padding(.top)
-                    
-                    // Настройки
-                    VStack(spacing: 16) {
-                        ProfileMenuItem(
-                            title: "Редактировать профиль",
-                            icon: "person.crop.circle",
-                            action: { showingEditProfile = true }
-                        )
+        SwiftUI.Group {
+            if isInSplitView {
+                // iPad layout - без NavigationView
+                ScrollView {
+                    VStack(spacing: 24) {
+                        // Профиль пользователя
+                        ProfileHeader(user: currentUser)
+                            .padding(.top)
                         
-                        ProfileMenuItem(
-                            title: "Расписание звонков",
-                            icon: "clock",
-                            action: { }
-                        )
+                        // Статус синхронизации
+                        CloudKitStatusView(cloudKitService: cloudKitService)
+                            .padding(.horizontal)
                         
-                        ProfileMenuItem(
-                            title: "О приложении",
-                            icon: "info.circle",
-                            action: { }
-                        )
+                        // Настройки
+                        VStack(spacing: 16) {
+                            ProfileMenuItem(
+                                title: "Редактировать профиль",
+                                icon: "person.crop.circle",
+                                action: { showingEditProfile = true }
+                            )
+                            
+                            ProfileMenuItem(
+                                title: "Расписание звонков",
+                                icon: "clock",
+                                action: { showingLessonTimes = true }
+                            )
+                            
+                            ProfileMenuItem(
+                                title: "О приложении",
+                                icon: "info.circle",
+                                action: { showingAbout = true }
+                            )
+                            
+                            Divider()
+                                .padding(.vertical)
+                            
+                            ProfileMenuItem(
+                                title: "Сбросить данные",
+                                icon: "trash",
+                                isDestructive: true,
+                                action: { showingDeleteConfirmation = true }
+                            )
+                        }
+                        .padding(.horizontal)
                         
-                        Divider()
-                            .padding(.vertical)
-                        
-                        ProfileMenuItem(
-                            title: "Сбросить данные",
-                            icon: "trash",
-                            isDestructive: true,
-                            action: { showingDeleteConfirmation = true }
-                        )
+                        Spacer()
                     }
-                    .padding(.horizontal)
-                    
-                    Spacer()
+                }
+                .navigationTitle("Профиль")
+                .navigationBarTitleDisplayMode(.large)
+            } else {
+                // iPhone layout - с NavigationView
+                NavigationView {
+                    ScrollView {
+                        VStack(spacing: 24) {
+                            // Профиль пользователя
+                            ProfileHeader(user: currentUser)
+                                .padding(.top)
+                            
+                            // Статус синхронизации
+                            CloudKitStatusView(cloudKitService: cloudKitService)
+                                .padding(.horizontal)
+                            
+                            // Настройки
+                            VStack(spacing: 16) {
+                                ProfileMenuItem(
+                                    title: "Редактировать профиль",
+                                    icon: "person.crop.circle",
+                                    action: { showingEditProfile = true }
+                                )
+                                
+                                ProfileMenuItem(
+                                    title: "Расписание звонков",
+                                    icon: "clock",
+                                    action: { showingLessonTimes = true }
+                                )
+                                
+                                ProfileMenuItem(
+                                    title: "О приложении",
+                                    icon: "info.circle",
+                                    action: { showingAbout = true }
+                                )
+                                
+                                Divider()
+                                    .padding(.vertical)
+                                
+                                ProfileMenuItem(
+                                    title: "Сбросить данные",
+                                    icon: "trash",
+                                    isDestructive: true,
+                                    action: { showingDeleteConfirmation = true }
+                                )
+                            }
+                            .padding(.horizontal)
+                            
+                            Spacer()
+                        }
+                    }
+                    .navigationTitle("Профиль")
+                    .navigationBarTitleDisplayMode(.large)
                 }
             }
-            .navigationTitle("Профиль")
-            .navigationBarTitleDisplayMode(.large)
         }
         .sheet(isPresented: $showingEditProfile) {
             EditProfileSheet(user: currentUser)
+        }
+        .sheet(isPresented: $showingLessonTimes) {
+            LessonTimesSheet()
+        }
+        .sheet(isPresented: $showingAbout) {
+            AboutSheet()
         }
         .confirmationDialog(
             "Сбросить все данные?",

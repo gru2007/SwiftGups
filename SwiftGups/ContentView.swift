@@ -5,6 +5,11 @@ struct ContentView: View {
     @State private var searchText = ""
     @State private var showDatePicker = false
     let showUserInfo: Bool
+    @Environment(\.horizontalSizeClass) private var horizontalSizeClass
+    
+    private var isIPad: Bool {
+        horizontalSizeClass == .regular
+    }
     
     init(scheduleService: ScheduleService? = nil, showUserInfo: Bool = true) {
         self._scheduleService = StateObject(wrappedValue: scheduleService ?? ScheduleService())
@@ -12,47 +17,73 @@ struct ContentView: View {
     }
 
     var body: some View {
-        NavigationView {
-            ScrollView {
-                VStack(spacing: 20) {
-                    // Заголовок (только для standalone версии)
-                    if showUserInfo {
-                        HeaderView()
+        Group {
+            if isIPad && !showUserInfo {
+                // iPad расписание без NavigationView (для использования в NavigationSplitView)
+                ScrollView {
+                    LazyVStack(spacing: 24) {
+                        // Выбор даты - больше и компактнее для iPad
+                        DateSelectionView(scheduleService: scheduleService, showDatePicker: $showDatePicker)
+                            .padding(.horizontal, 24)
+                        
+                        // Отображение расписания - с большими отступами
+                        ScheduleDisplayView(scheduleService: scheduleService)
+                            .padding(.horizontal, 24)
                     }
-                    
-                    // Выбор факультета
-                    if showUserInfo {
-                        FacultySelectionView(scheduleService: scheduleService)
-                    }
-                    
-                    // Выбор даты
-                    DateSelectionView(scheduleService: scheduleService, showDatePicker: $showDatePicker)
-                    
-                    // Поиск и выбор группы
-                    if scheduleService.selectedFaculty != nil && showUserInfo {
-                        GroupSelectionView(scheduleService: scheduleService, searchText: $searchText)
-                    }
-                    
-                    // Отображение расписания
-                    ScheduleDisplayView(scheduleService: scheduleService)
-                    
-                    Spacer()
+                    .padding(.top, 16)
                 }
-                .padding()
-            }
-            .navigationTitle("SwiftGups")
-            .navigationBarTitleDisplayMode(.large)
-            .refreshable {
-                await scheduleService.refresh()
-            }
-            .sheet(isPresented: $showDatePicker) {
-                DatePickerSheet(selectedDate: $scheduleService.selectedDate) {
-                    scheduleService.selectDate(scheduleService.selectedDate)
+                .refreshable {
+                    await scheduleService.refresh()
+                }
+            } else {
+                // iPhone или standalone версия
+                NavigationView {
+                    ScrollView {
+                        VStack(spacing: isIPad ? 24 : 20) {
+                            // Заголовок (только для standalone версии)
+                            if showUserInfo {
+                                HeaderView()
+                            }
+                            
+                            // Выбор факультета
+                            if showUserInfo {
+                                FacultySelectionView(scheduleService: scheduleService)
+                            }
+                            
+                            // Выбор даты
+                            DateSelectionView(scheduleService: scheduleService, showDatePicker: $showDatePicker)
+                            
+                            // Поиск и выбор группы
+                            if scheduleService.selectedFaculty != nil && showUserInfo {
+                                GroupSelectionView(scheduleService: scheduleService, searchText: $searchText)
+                            }
+                            
+                            // Отображение расписания
+                            ScheduleDisplayView(scheduleService: scheduleService)
+                            
+                            Spacer(minLength: 40)
+                        }
+                        .padding(.horizontal, isIPad ? 24 : 16)
+                        .padding(.vertical, isIPad ? 20 : 16)
+                    }
+                    .navigationTitle(showUserInfo ? "SwiftGups" : "")
+                    .navigationBarTitleDisplayMode(showUserInfo ? .large : .inline)
+                    .refreshable {
+                        if showUserInfo {
+                            await scheduleService.refresh()
+                        }
+                    }
                 }
             }
         }
+        .sheet(isPresented: $showDatePicker) {
+            DatePickerSheet(selectedDate: $scheduleService.selectedDate) {
+                scheduleService.selectDate(scheduleService.selectedDate)
+            }
+        }
         .task {
-            if scheduleService.selectedFaculty != nil {
+            // В standalone режиме подгружаем группы автоматически, встраиваемый режим (в табе) управляется снаружи
+            if showUserInfo, scheduleService.selectedFaculty != nil {
                 await scheduleService.loadGroups()
             }
         }
@@ -154,11 +185,18 @@ struct DateSelectionView: View {
             HStack(spacing: 12) {
                 // Предыдущая неделя
                 Button(action: {
-                    scheduleService.previousWeek()
+                    let impactFeedback = UIImpactFeedbackGenerator(style: .light)
+                    impactFeedback.impactOccurred()
+                    
+                    withAnimation(.easeInOut(duration: 0.3)) {
+                        scheduleService.previousWeek()
+                    }
                 }) {
                     Image(systemName: "chevron.left")
                         .font(.title3)
                         .foregroundColor(.blue)
+                        .scaleEffect(1.0)
+                        .animation(.easeInOut(duration: 0.1), value: scheduleService.selectedDate)
                 }
                 
                 Spacer()
@@ -170,7 +208,12 @@ struct DateSelectionView: View {
                         .foregroundColor(.primary)
                     
                     Button("Текущая неделя") {
-                        scheduleService.goToCurrentWeek()
+                        let impactFeedback = UIImpactFeedbackGenerator(style: .light)
+                        impactFeedback.impactOccurred()
+                        
+                        withAnimation(.easeInOut(duration: 0.3)) {
+                            scheduleService.goToCurrentWeek()
+                        }
                     }
                     .font(.caption)
                     .foregroundColor(.blue)
@@ -180,11 +223,18 @@ struct DateSelectionView: View {
                 
                 // Следующая неделя
                 Button(action: {
-                    scheduleService.nextWeek()
+                    let impactFeedback = UIImpactFeedbackGenerator(style: .light)
+                    impactFeedback.impactOccurred()
+                    
+                    withAnimation(.easeInOut(duration: 0.3)) {
+                        scheduleService.nextWeek()
+                    }
                 }) {
                     Image(systemName: "chevron.right")
                         .font(.title3)
                         .foregroundColor(.blue)
+                        .scaleEffect(1.0)
+                        .animation(.easeInOut(duration: 0.1), value: scheduleService.selectedDate)
                 }
             }
             .padding()
@@ -433,17 +483,22 @@ struct EmptyScheduleView: View {
 
 struct ScheduleView: View {
     let schedule: Schedule
+    @Environment(\.horizontalSizeClass) private var horizontalSizeClass
+    
+    private var isIPad: Bool {
+        horizontalSizeClass == .regular
+    }
     
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
             // Заголовок расписания
             VStack(alignment: .leading, spacing: 8) {
                 Text("Расписание")
-                    .font(.title2)
+                    .font(isIPad ? .title : .title2)
                     .fontWeight(.bold)
                 
                 Text(schedule.groupName)
-                    .font(.headline)
+                    .font(isIPad ? .title3 : .headline)
                     .foregroundColor(.blue)
                 
                 Text("Период: \(DateFormatter.displayDateFormatter.string(from: schedule.startDate)) - \(DateFormatter.displayDateFormatter.string(from: schedule.endDate))")
@@ -455,14 +510,24 @@ struct ScheduleView: View {
             if schedule.days.isEmpty {
                 EmptyScheduleView()
             } else {
-                LazyVStack(spacing: 16) {
-                    ForEach(schedule.days) { day in
-                        ScheduleDayView(day: day)
+                if isIPad && schedule.days.count > 2 {
+                    // iPad: сетка 2x2 или 3x2 для компактного отображения
+                    LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 16), count: 2), spacing: 16) {
+                        ForEach(schedule.days) { day in
+                            ScheduleDayView(day: day, isCompact: true)
+                        }
+                    }
+                } else {
+                    // iPhone: вертикальный список
+                    LazyVStack(spacing: 16) {
+                        ForEach(schedule.days) { day in
+                            ScheduleDayView(day: day, isCompact: false)
+                        }
                     }
                 }
             }
         }
-        .padding()
+        .padding(isIPad ? 20 : 16)
         .background(
             RoundedRectangle(cornerRadius: 16)
                 .fill(Color(.systemBackground))
@@ -475,6 +540,12 @@ struct ScheduleView: View {
 
 struct ScheduleDayView: View {
     let day: ScheduleDay
+    let isCompact: Bool
+    @Environment(\.horizontalSizeClass) private var horizontalSizeClass
+    
+    private var isIPad: Bool {
+        horizontalSizeClass == .regular
+    }
     
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -512,14 +583,29 @@ struct ScheduleDayView: View {
                     .foregroundColor(.secondary)
                     .padding()
             } else {
-                LazyVStack(spacing: 8) {
-                    ForEach(day.lessons) { lesson in
-                        LessonView(lesson: lesson)
+                if isCompact && day.lessons.count > 3 {
+                    // Компактное отображение для iPad - показываем только первые 2 занятия + счетчик
+                    LazyVStack(spacing: 6) {
+                        ForEach(day.lessons.prefix(2)) { lesson in
+                            LessonView(lesson: lesson, isCompact: true)
+                        }
+                        if day.lessons.count > 2 {
+                            Text("ещё \(day.lessons.count - 2)")
+                                .font(.caption)
+                                .foregroundColor(.secondary)
+                                .padding(.top, 4)
+                        }
+                    }
+                } else {
+                    LazyVStack(spacing: isCompact ? 6 : 8) {
+                        ForEach(day.lessons) { lesson in
+                            LessonView(lesson: lesson, isCompact: isCompact)
+                        }
                     }
                 }
             }
         }
-        .padding()
+        .padding(isIPad && isCompact ? 12 : 16)
         .background(
             RoundedRectangle(cornerRadius: 12)
                 .fill(Color(.systemGray6))
@@ -531,6 +617,7 @@ struct ScheduleDayView: View {
 
 struct LessonView: View {
     let lesson: Lesson
+    let isCompact: Bool
     
     private var lessonTypeColor: Color {
         switch lesson.type {
@@ -546,99 +633,151 @@ struct LessonView: View {
     }
     
     var body: some View {
-        HStack(alignment: .top, spacing: 12) {
-            // Номер пары и время
-            VStack(alignment: .leading, spacing: 2) {
-                Text("\(lesson.pairNumber) пара")
-                    .font(.caption)
-                    .fontWeight(.semibold)
-                    .foregroundColor(lessonTypeColor)
-                
-                Text("\(lesson.timeStart)-\(lesson.timeEnd)")
-                    .font(.caption2)
-                    .foregroundColor(.secondary)
-            }
-            .frame(width: 60, alignment: .leading)
-            
-            // Информация о занятии
+        if isCompact {
+            // Компактное отображение для iPad
             VStack(alignment: .leading, spacing: 4) {
-                // Предмет
-                if lesson.subject.containsURL {
-                    ClickableLinkText(text: lesson.subject)
-                        .font(.subheadline)
-                        .fontWeight(.medium)
-                        .lineLimit(2)
-                } else {
-                    Text(lesson.subject)
-                        .font(.subheadline)
-                        .fontWeight(.medium)
-                        .lineLimit(2)
+                HStack {
+                    Text("\(lesson.pairNumber)")
+                        .font(.caption)
+                        .fontWeight(.bold)
+                        .foregroundColor(lessonTypeColor)
+                        .frame(width: 20)
+                    
+                    if lesson.subject.containsURL {
+                        ClickableLinkText(text: lesson.subject)
+                            .font(.caption)
+                            .fontWeight(.medium)
+                            .lineLimit(1)
+                    } else {
+                        Text(lesson.subject)
+                            .font(.caption)
+                            .fontWeight(.medium)
+                            .lineLimit(1)
+                    }
+                    
+                    Spacer()
                 }
                 
-                // Тип занятия
-                Text(lesson.type.rawValue)
-                    .font(.caption)
-                    .padding(.horizontal, 6)
-                    .padding(.vertical, 2)
-                    .background(
-                        RoundedRectangle(cornerRadius: 4)
-                            .fill(lessonTypeColor.opacity(0.2))
+                HStack(spacing: 6) {
+                    Text("\(lesson.timeStart)-\(lesson.timeEnd)")
+                        .font(.caption2)
+                        .foregroundColor(.secondary)
+                    
+                    if let room = lesson.room, !room.isEmpty {
+                        Text("📍 \(room)")
+                            .font(.caption2)
+                            .foregroundColor(.secondary)
+                            .lineLimit(1)
+                    }
+                    
+                    Spacer()
+                }
+            }
+            .padding(8)
+            .background(
+                RoundedRectangle(cornerRadius: 6)
+                    .fill(lessonTypeColor.opacity(0.1))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 6)
+                            .stroke(lessonTypeColor.opacity(0.3), lineWidth: 1)
                     )
-                    .foregroundColor(lessonTypeColor)
+            )
+        } else {
+            // Полное отображение для iPhone
+            HStack(alignment: .top, spacing: 12) {
+                // Номер пары и время
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("\(lesson.pairNumber) пара")
+                        .font(.caption)
+                        .fontWeight(.semibold)
+                        .foregroundColor(lessonTypeColor)
+                    
+                    Text("\(lesson.timeStart)-\(lesson.timeEnd)")
+                        .font(.caption2)
+                        .foregroundColor(.secondary)
+                }
+                .frame(width: 60, alignment: .leading)
                 
-                // Преподаватель
-                if let teacher = lesson.teacher, !teacher.name.isEmpty {
-                    HStack(spacing: 4) {
-                        if teacher.name.containsURL {
-                            // Если имя преподавателя содержит ссылку
-                            ClickableLinkText(text: teacher.name)
+                // Информация о занятии
+                VStack(alignment: .leading, spacing: 4) {
+                    // Предмет
+                    if lesson.subject.containsURL {
+                        ClickableLinkText(text: lesson.subject)
+                            .font(.subheadline)
+                            .fontWeight(.medium)
+                            .lineLimit(2)
+                    } else {
+                        Text(lesson.subject)
+                            .font(.subheadline)
+                            .fontWeight(.medium)
+                            .lineLimit(2)
+                    }
+                    
+                    // Тип занятия
+                    Text(lesson.type.rawValue)
+                        .font(.caption)
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 2)
+                        .background(
+                            RoundedRectangle(cornerRadius: 4)
+                                .fill(lessonTypeColor.opacity(0.2))
+                        )
+                        .foregroundColor(lessonTypeColor)
+                    
+                    // Преподаватель
+                    if let teacher = lesson.teacher, !teacher.name.isEmpty {
+                        HStack(spacing: 4) {
+                            if teacher.name.containsURL {
+                                // Если имя преподавателя содержит ссылку
+                                ClickableLinkText(text: teacher.name)
+                                    .font(.caption)
+                            } else {
+                                Text(teacher.name)
+                                    .font(.caption)
+                                    .foregroundColor(.secondary)
+                            }
+                            
+                            if let email = teacher.email, !email.isEmpty {
+                                Link("✉️", destination: URL(string: "mailto:\(email)") ?? URL(string: "about:blank")!)
+                                    .font(.caption2)
+                            }
+                        }
+                    }
+                    
+                    // Аудитория
+                    if let room = lesson.room, !room.isEmpty {
+                        if room.containsURL {
+                            ClickableLinkText(text: "📍 \(room)")
                                 .font(.caption)
                         } else {
-                            Text(teacher.name)
+                            Text("📍 \(room)")
                                 .font(.caption)
                                 .foregroundColor(.secondary)
                         }
-                        
-                        if let email = teacher.email, !email.isEmpty {
-                            Link("✉️", destination: URL(string: "mailto:\(email)") ?? URL(string: "about:blank")!)
-                                .font(.caption2)
+                    }
+                    
+                    // Онлайн информация
+                    if let onlineLink = lesson.onlineLink, !onlineLink.isEmpty {
+                        if onlineLink.containsURL {
+                            ClickableLinkText(text: "💻 \(onlineLink)")
+                                .font(.caption)
+                        } else {
+                            Text("💻 \(onlineLink)")
+                                .font(.caption)
+                                .foregroundColor(.blue)
                         }
                     }
                 }
                 
-                // Аудитория
-                if let room = lesson.room, !room.isEmpty {
-                    if room.containsURL {
-                        ClickableLinkText(text: "📍 \(room)")
-                            .font(.caption)
-                    } else {
-                        Text("📍 \(room)")
-                            .font(.caption)
-                            .foregroundColor(.secondary)
-                    }
-                }
-                
-                // Онлайн информация
-                if let onlineLink = lesson.onlineLink, !onlineLink.isEmpty {
-                    if onlineLink.containsURL {
-                        ClickableLinkText(text: "💻 \(onlineLink)")
-                            .font(.caption)
-                    } else {
-                        Text("💻 \(onlineLink)")
-                            .font(.caption)
-                            .foregroundColor(.blue)
-                    }
-                }
+                Spacer()
             }
-            
-            Spacer()
+            .padding()
+            .background(
+                RoundedRectangle(cornerRadius: 8)
+                    .fill(Color(.systemBackground))
+                    .shadow(color: .black.opacity(0.05), radius: 2, x: 0, y: 1)
+            )
         }
-        .padding()
-        .background(
-            RoundedRectangle(cornerRadius: 8)
-                .fill(Color(.systemBackground))
-                .shadow(color: .black.opacity(0.05), radius: 2, x: 0, y: 1)
-        )
     }
 }
 
@@ -684,7 +823,7 @@ struct DatePickerSheet: View {
                 }
             }
         }
-        .presentationDetents([.medium, .large])
+        .presentationDetents([.fraction(0.7), .large])
     }
 }
 
