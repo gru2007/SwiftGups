@@ -321,7 +321,7 @@ struct HomeworkCard: View {
     }
     
     private var priorityColor: Color {
-        switch homework.priority {
+        switch homework.effectivePriority {
         case .low: return .gray
         case .medium: return .blue
         case .high: return .orange
@@ -367,7 +367,7 @@ struct HomeworkCard: View {
                         .fill(priorityColor)
                         .frame(width: 8, height: 8)
                     
-                    Text(homework.priority.rawValue)
+                    Text(homework.effectivePriority.rawValue)
                         .font(.caption)
                         .foregroundColor(.secondary)
                 }
@@ -689,22 +689,32 @@ struct EditProfileSheet: View {
                 }
                 
                 Section("Учебная информация") {
-                    Picker("Институт/Факультет", selection: $selectedFaculty) {
-                        Text("Выберите факультет").tag(nil as Faculty?)
-                        ForEach(Faculty.allFaculties) { faculty in
-                            Text(faculty.name).tag(faculty as Faculty?)
-                        }
-                    }
-                    .pickerStyle(MenuPickerStyle())
-                    
-                    if selectedFaculty != nil {
-                        Picker("Группа", selection: $selectedGroup) {
-                            Text("Выберите группу").tag(nil as Group?)
-                            ForEach(scheduleService.groups) { group in
-                                Text("\(group.name) - \(group.fullName)").tag(group as Group?)
+                    VStack(alignment: .leading) {
+                        Text("Институт/Факультет")
+                        Picker("Институт/Факультет", selection: $selectedFaculty) {
+                            Text("Выберите факультет").tag(nil as Faculty?)
+                            ForEach(Faculty.allFaculties) { faculty in
+                                Text(faculty.name).tag(faculty as Faculty?)
                             }
                         }
-                        .pickerStyle(MenuPickerStyle())
+                        .pickerStyle(.menu)
+                        .labelsHidden()
+                    }
+                }
+                
+                if selectedFaculty != nil {
+                    Section("Выбор группы") {
+                        VStack(alignment: .leading) {
+                            Text("Группа")
+                            Picker("Группа", selection: $selectedGroup) {
+                                Text("Выберите группу").tag(nil as Group?)
+                                ForEach(scheduleService.groups) { group in
+                                    Text("\(group.name) - \(group.fullName)").tag(group as Group?)
+                                }
+                            }
+                            .pickerStyle(.menu)
+                            .labelsHidden()
+                        }
                     }
                 }
             }
@@ -725,7 +735,7 @@ struct EditProfileSheet: View {
                     .disabled(!canSave)
                 }
             }
-            .onChange(of: selectedFaculty) { _, newFaculty in
+            .onChange(of: selectedFaculty) { newFaculty in
                 if let faculty = newFaculty {
                     scheduleService.selectFaculty(faculty)
                     selectedGroup = nil
@@ -767,10 +777,10 @@ struct EditProfileSheet: View {
 #Preview {
     let config = ModelConfiguration(isStoredInMemoryOnly: true)
     let container = try! ModelContainer(for: User.self, Homework.self, configurations: config)
-    
+
     let sampleUser = User(name: "Иван Иванов", facultyId: "2", facultyName: "Институт управления", groupId: "58031", groupName: "БО241ИСТ")
     container.mainContext.insert(sampleUser)
-    
-    TabBarView(currentUser: sampleUser)
+
+    return TabBarView(currentUser: sampleUser)
         .modelContainer(container)
 }

@@ -36,7 +36,7 @@ struct Faculty: Codable, Identifiable, Hashable {
 }
 
 /// Группа студентов
-struct Group: Codable, Identifiable {
+struct Group: Codable, Identifiable, Hashable {
     let id: String // GroupID из API
     let name: String // Название группы (например, "БО241ИСТ")
     let fullName: String // Полное название специальности
@@ -182,15 +182,15 @@ extension Date {
 /// Пользователь приложения (хранится локально с SwiftData)
 @Model
 class User {
-    @Attribute(.unique) var id: UUID
-    var name: String
-    var facultyId: String
-    var facultyName: String
-    var groupId: String
-    var groupName: String
-    var createdAt: Date
-    var updatedAt: Date
-    var isFirstTime: Bool
+    var id: UUID = UUID()
+    var name: String = ""
+    var facultyId: String = ""
+    var facultyName: String = ""
+    var groupId: String = ""
+    var groupName: String = ""
+    var createdAt: Date = Date()
+    var updatedAt: Date = Date()
+    var isFirstTime: Bool = true
     
     init(name: String, facultyId: String, facultyName: String, groupId: String, groupName: String) {
         self.id = UUID()
@@ -220,16 +220,16 @@ class User {
 /// Домашнее задание (синхронизируется через iCloud)
 @Model
 class Homework {
-    @Attribute(.unique) var id: UUID
-    var title: String
-    var subject: String
-    var desc: String
-    var dueDate: Date
-    var isCompleted: Bool
-    var createdAt: Date
-    var updatedAt: Date
-    var priority: HomeworkPriority
-    var attachments: [String] // Пути к файлам или ссылки
+    var id: UUID = UUID()
+    var title: String = ""
+    var subject: String = ""
+    var desc: String = ""
+    var dueDate: Date = Date()
+    var isCompleted: Bool = false
+    var createdAt: Date = Date()
+    var updatedAt: Date = Date()
+    var priority: HomeworkPriority?
+    var attachments: [String] = [] // Пути к файлам или ссылки
     
     init(title: String, subject: String, description: String, dueDate: Date, priority: HomeworkPriority = .medium) {
         self.id = UUID()
@@ -242,6 +242,10 @@ class Homework {
         self.updatedAt = Date()
         self.priority = priority
         self.attachments = []
+    }
+    
+    var effectivePriority: HomeworkPriority {
+        return priority ?? .medium
     }
     
     func toggle() {

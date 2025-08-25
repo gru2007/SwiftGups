@@ -13,7 +13,7 @@ struct MainAppView: View {
     @Query private var users: [User]
     
     var body: some View {
-        Group {
+        SwiftUI.Group {
             if let currentUser = users.first {
                 TabBarView(currentUser: currentUser)
             } else {
