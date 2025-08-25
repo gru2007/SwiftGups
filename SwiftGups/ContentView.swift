@@ -4,6 +4,8 @@ struct ContentView: View {
     @StateObject private var scheduleService: ScheduleService
     @State private var searchText = ""
     @State private var showDatePicker = false
+    @State private var selectedLesson: Lesson? = nil
+    @State private var selectedDay: ScheduleDay? = nil
     let showUserInfo: Bool
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
     
@@ -81,6 +83,7 @@ struct ContentView: View {
                 scheduleService.selectDate(scheduleService.selectedDate)
             }
         }
+
         .task {
             // В standalone режиме подгружаем группы автоматически, встраиваемый режим (в табе) управляется снаружи
             if showUserInfo, scheduleService.selectedFaculty != nil {
@@ -542,6 +545,7 @@ struct ScheduleDayView: View {
     let day: ScheduleDay
     let isCompact: Bool
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
+    @State private var selectedLesson: Lesson? = nil
     
     private var isIPad: Bool {
         horizontalSizeClass == .regular
@@ -583,24 +587,13 @@ struct ScheduleDayView: View {
                     .foregroundColor(.secondary)
                     .padding()
             } else {
-                if isCompact && day.lessons.count > 3 {
-                    // Компактное отображение для iPad - показываем только первые 2 занятия + счетчик
-                    LazyVStack(spacing: 6) {
-                        ForEach(day.lessons.prefix(2)) { lesson in
-                            LessonView(lesson: lesson, isCompact: true)
-                        }
-                        if day.lessons.count > 2 {
-                            Text("ещё \(day.lessons.count - 2)")
-                                .font(.caption)
-                                .foregroundColor(.secondary)
-                                .padding(.top, 4)
-                        }
-                    }
-                } else {
-                    LazyVStack(spacing: isCompact ? 6 : 8) {
-                        ForEach(day.lessons) { lesson in
-                            LessonView(lesson: lesson, isCompact: isCompact)
-                        }
+                // Показываем все занятия
+                LazyVStack(spacing: isCompact ? 6 : 12) {
+                    ForEach(day.lessons) { lesson in
+                        LessonView(lesson: lesson, isCompact: isCompact)
+                            .onTapGesture {
+                                selectedLesson = lesson
+                            }
                     }
                 }
             }
@@ -610,6 +603,10 @@ struct ScheduleDayView: View {
             RoundedRectangle(cornerRadius: 12)
                 .fill(Color(.systemGray6))
         )
+        .sheet(item: $selectedLesson) { lesson in
+            LessonDetailSheet(lesson: lesson)
+        }
+
     }
 }
 
@@ -634,51 +631,85 @@ struct LessonView: View {
     
     var body: some View {
         if isCompact {
-            // Компактное отображение для iPad
-            VStack(alignment: .leading, spacing: 4) {
-                HStack {
-                    Text("\(lesson.pairNumber)")
-                        .font(.caption)
-                        .fontWeight(.bold)
-                        .foregroundColor(lessonTypeColor)
-                        .frame(width: 20)
-                    
-                    if lesson.subject.containsURL {
-                        ClickableLinkText(text: lesson.subject)
+            // Компактное отображение для iPad с полной информацией
+            VStack(alignment: .leading, spacing: 6) {
+                HStack(alignment: .top, spacing: 8) {
+                    // Левая колонка - номер пары и тип
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("\(lesson.pairNumber)")
                             .font(.caption)
-                            .fontWeight(.medium)
-                            .lineLimit(1)
-                    } else {
-                        Text(lesson.subject)
-                            .font(.caption)
+                            .fontWeight(.bold)
+                            .foregroundColor(lessonTypeColor)
+                        
+                        Text(lesson.type.rawValue.capitalized)
+                            .font(.system(size: 9))
+                            .foregroundColor(lessonTypeColor)
                             .fontWeight(.medium)
                             .lineLimit(1)
                     }
+                    .frame(width: 50, alignment: .leading)
                     
-                    Spacer()
-                }
-                
-                HStack(spacing: 6) {
-                    Text("\(lesson.timeStart)-\(lesson.timeEnd)")
-                        .font(.caption2)
-                        .foregroundColor(.secondary)
+                    // Средняя колонка - предмет и преподаватель
+                    VStack(alignment: .leading, spacing: 2) {
+                        if lesson.subject.containsURL {
+                            ClickableLinkText(text: lesson.subject)
+                                .font(.caption)
+                                .fontWeight(.medium)
+                                .lineLimit(2)
+                        } else {
+                            Text(lesson.subject)
+                                .font(.caption)
+                                .fontWeight(.medium)
+                                .lineLimit(2)
+                        }
+                        
+                        if let teacher = lesson.teacher {
+                            Text(teacher.name)
+                                .font(.system(size: 10))
+                                .foregroundColor(.secondary)
+                                .lineLimit(1)
+                        }
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
                     
-                    if let room = lesson.room, !room.isEmpty {
-                        Text("📍 \(room)")
+                    // Правая колонка - время и аудитория
+                    VStack(alignment: .trailing, spacing: 2) {
+                        Text("\(lesson.timeStart)-\(lesson.timeEnd)")
                             .font(.caption2)
                             .foregroundColor(.secondary)
+                            .fontWeight(.medium)
+                        
+                        if let room = lesson.room, !room.isEmpty {
+                            Text(room)
+                                .font(.caption2)
+                                .foregroundColor(.secondary)
+                                .lineLimit(1)
+                        }
+                    }
+                    .frame(width: 60, alignment: .trailing)
+                }
+                
+                // Онлайн-ссылка (если есть)
+                if let onlineLink = lesson.onlineLink, !onlineLink.isEmpty {
+                    HStack {
+                        Image(systemName: "video.circle.fill")
+                            .font(.system(size: 10))
+                            .foregroundColor(.orange)
+                        
+                        Text(onlineLink)
+                            .font(.system(size: 9))
+                            .foregroundColor(.orange)
                             .lineLimit(1)
                     }
-                    
-                    Spacer()
+                    .padding(.leading, 50)
                 }
             }
             .padding(8)
             .background(
-                RoundedRectangle(cornerRadius: 6)
+                RoundedRectangle(cornerRadius: 8)
                     .fill(lessonTypeColor.opacity(0.1))
                     .overlay(
-                        RoundedRectangle(cornerRadius: 6)
+                        RoundedRectangle(cornerRadius: 8)
                             .stroke(lessonTypeColor.opacity(0.3), lineWidth: 1)
                     )
             )
@@ -883,6 +914,260 @@ struct ClickableLinkText: View {
         }
         
         return result.filter { !$0.isEmpty }
+    }
+}
+
+// MARK: - Lesson Detail Sheet
+struct LessonDetailSheet: View {
+    let lesson: Lesson
+    @Environment(\.dismiss) private var dismiss
+    @Environment(\.horizontalSizeClass) private var horizontalSizeClass
+    
+    private var isIPad: Bool {
+        horizontalSizeClass == .regular
+    }
+    
+    private var lessonTypeColor: Color {
+        switch lesson.type {
+        case .lecture:
+            return .blue
+        case .practice:
+            return .green
+        case .laboratory:
+            return .orange
+        case .unknown:
+            return .gray
+        }
+    }
+    
+    var body: some View {
+        NavigationView {
+            ScrollView {
+                VStack(alignment: .leading, spacing: 20) {
+                    // Заголовок
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text(lesson.subject)
+                            .font(.title2)
+                            .fontWeight(.bold)
+                            .foregroundColor(.primary)
+                        
+                        HStack {
+                            Text(lesson.type.rawValue)
+                                .font(.subheadline)
+                                .fontWeight(.semibold)
+                                .foregroundColor(lessonTypeColor)
+                            
+                            Spacer()
+                            
+                            Text("\(lesson.pairNumber) пара")
+                                .font(.subheadline)
+                                .fontWeight(.medium)
+                                .foregroundColor(.secondary)
+                        }
+                    }
+                    .padding()
+                    .background(
+                        RoundedRectangle(cornerRadius: 12)
+                            .fill(lessonTypeColor.opacity(0.1))
+                    )
+                    
+                    // Основная информация
+                    VStack(alignment: .leading, spacing: 16) {
+                        // Время
+                        InfoRow(
+                            icon: "clock",
+                            title: "Время",
+                            value: "\(lesson.timeStart) - \(lesson.timeEnd)",
+                            color: .blue
+                        )
+                        
+                        // Аудитория
+                        if let room = lesson.room, !room.isEmpty {
+                            InfoRow(
+                                icon: "location",
+                                title: "Аудитория", 
+                                value: room,
+                                color: .green
+                            )
+                        }
+                        
+                        // Преподаватель
+                        if let teacher = lesson.teacher {
+                            InfoRow(
+                                icon: "person",
+                                title: "Преподаватель",
+                                value: teacher.name,
+                                color: .purple
+                            )
+                            
+                            if let email = teacher.email {
+                                InfoRow(
+                                    icon: "envelope",
+                                    title: "Email",
+                                    value: email,
+                                    color: .orange,
+                                    isEmail: true
+                                )
+                            }
+                        }
+                        
+                        // Онлайн-ссылка
+                        if let onlineLink = lesson.onlineLink, !onlineLink.isEmpty {
+                            InfoRow(
+                                icon: "video",
+                                title: "Дистанционно",
+                                value: onlineLink,
+                                color: .red,
+                                isLink: true
+                            )
+                        }
+                    }
+                    .padding()
+                    .background(
+                        RoundedRectangle(cornerRadius: 12)
+                            .fill(Color(.systemBackground))
+                            .shadow(color: .black.opacity(0.05), radius: 5, x: 0, y: 2)
+                    )
+                    
+                    Spacer()
+                }
+                .padding()
+            }
+            .navigationTitle("Детали пары")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .navigationBarTrailing) {
+                    Button("Закрыть") {
+                        dismiss()
+                    }
+                }
+            }
+        }
+        .presentationDetents([.large])
+        .presentationDragIndicator(.visible)
+    }
+}
+
+// MARK: - Day Detail Sheet
+struct DayDetailSheet: View {
+    let day: ScheduleDay
+    @Environment(\.dismiss) private var dismiss
+    @Environment(\.horizontalSizeClass) private var horizontalSizeClass
+    
+    private var isIPad: Bool {
+        horizontalSizeClass == .regular
+    }
+    
+    var body: some View {
+        NavigationView {
+            ScrollView {
+                VStack(alignment: .leading, spacing: 20) {
+                    // Заголовок дня
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text(day.weekday)
+                            .font(.title2)
+                            .fontWeight(.bold)
+                        
+                        Text(DateFormatter.displayDateFormatter.string(from: day.date))
+                            .font(.subheadline)
+                            .foregroundColor(.secondary)
+                        
+                        if let weekNumber = day.weekNumber {
+                            HStack {
+                                Image(systemName: "calendar")
+                                    .foregroundColor((day.isEvenWeek ?? false) ? .green : .orange)
+                                
+                                Text("\(weekNumber)-я неделя (\((day.isEvenWeek ?? false) ? "четная" : "нечетная"))")
+                                    .font(.caption)
+                                    .foregroundColor((day.isEvenWeek ?? false) ? .green : .orange)
+                            }
+                        }
+                    }
+                    .padding()
+                    .background(
+                        RoundedRectangle(cornerRadius: 12)
+                            .fill(Color(.systemGray6))
+                    )
+                    
+                    // Занятия
+                    if day.lessons.isEmpty {
+                        VStack(spacing: 16) {
+                            Image(systemName: "calendar.badge.exclamationmark")
+                                .font(.system(size: 50))
+                                .foregroundColor(.gray)
+                            
+                            Text("Нет занятий")
+                                .font(.headline)
+                                .foregroundColor(.secondary)
+                        }
+                        .frame(maxWidth: .infinity)
+                        .padding(40)
+                        .background(
+                            RoundedRectangle(cornerRadius: 12)
+                                .fill(Color(.systemBackground))
+                                .shadow(color: .black.opacity(0.05), radius: 5, x: 0, y: 2)
+                        )
+                    } else {
+                        VStack(spacing: 12) {
+                            ForEach(day.lessons) { lesson in
+                                LessonView(lesson: lesson, isCompact: false)
+                            }
+                        }
+                    }
+                    
+                    Spacer()
+                }
+                .padding()
+            }
+            .navigationTitle("Расписание дня")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .navigationBarTrailing) {
+                    Button("Закрыть") {
+                        dismiss()
+                    }
+                }
+            }
+        }
+        .presentationDetents([.large])
+        .presentationDragIndicator(.visible)
+    }
+}
+
+// MARK: - Info Row
+struct InfoRow: View {
+    let icon: String
+    let title: String
+    let value: String
+    let color: Color
+    var isLink: Bool = false
+    var isEmail: Bool = false
+    
+    var body: some View {
+        HStack(spacing: 12) {
+            Image(systemName: icon)
+                .font(.system(size: 16))
+                .foregroundColor(color)
+                .frame(width: 24)
+            
+            VStack(alignment: .leading, spacing: 2) {
+                Text(title)
+                    .font(.caption)
+                    .fontWeight(.medium)
+                    .foregroundColor(.secondary)
+                
+                if isLink || isEmail || value.containsURL {
+                    ClickableLinkText(text: value)
+                        .font(.body)
+                } else {
+                    Text(value)
+                        .font(.body)
+                        .foregroundColor(.primary)
+                }
+            }
+            
+            Spacer()
+        }
     }
 }
 
