@@ -780,6 +780,8 @@ struct HomeworkCard: View {
                         .foregroundColor(homework.isCompleted ? .green : .gray)
                         .symbolEffect(.bounce, value: homework.isCompleted)
                 }
+                .buttonStyle(PlainButtonStyle())  // Явно задаем стиль кнопки
+                .frame(width: 44, height: 44)     // Увеличиваем зону нажатия
             }
             
             if !homework.desc.isEmpty {
@@ -905,6 +907,7 @@ struct HomeworkPhotosSheet: View {
     let homework: Homework
     @Environment(\.dismiss) private var dismiss
     @State private var selectedImageURL: URL?
+    @State private var showingExportSheet = false
     
     private let columns = [
         GridItem(.flexible()),
@@ -954,10 +957,19 @@ struct HomeworkPhotosSheet: View {
                 }
                 
                 ToolbarItem(placement: .navigationBarTrailing) {
-                    Button("Закрыть") {
-                        dismiss()
+                    HStack {
+                        Button {
+                            showingExportSheet = true
+                        } label: {
+                            Image(systemName: "square.and.arrow.up")
+                                .font(.title3)
+                        }
+                        
+                        Button("Закрыть") {
+                            dismiss()
+                        }
+                        .fontWeight(.semibold)
                     }
-                    .fontWeight(.semibold)
                 }
             }
         }
@@ -967,6 +979,153 @@ struct HomeworkPhotosSheet: View {
         )) { identifiableURL in
             ImageViewerSheet(imageURL: identifiableURL.url)
         }
+        .sheet(isPresented: $showingExportSheet) {
+            PhotoExportSheet(imageAttachments: homework.imageAttachments)
+        }
+    }
+}
+
+// MARK: - Photo Export Sheet
+
+struct PhotoExportSheet: View {
+    let imageAttachments: [String]
+    @Environment(\.dismiss) private var dismiss
+    @State private var showingShareSheet = false
+    
+    var body: some View {
+        NavigationView {
+            VStack(spacing: 20) {
+                Text("Экспорт фотографий")
+                    .font(.title2)
+                    .fontWeight(.semibold)
+                
+                Text("Выберите, куда экспортировать \(imageAttachments.count) фотографий:")
+                    .font(.body)
+                    .foregroundColor(.secondary)
+                    .multilineTextAlignment(.center)
+                
+                VStack(spacing: 16) {
+                    Button {
+                        exportToPhotos()
+                    } label: {
+                        HStack(spacing: 16) {
+                            Image(systemName: "photo.on.rectangle.angled")
+                                .font(.title2)
+                                .foregroundColor(.white)
+                                .frame(width: 40, height: 40)
+                                .background(Color.blue)
+                                .cornerRadius(10)
+                            
+                            VStack(alignment: .leading, spacing: 4) {
+                                Text("Сохранить в галерею")
+                                    .font(.headline)
+                                    .foregroundColor(.primary)
+                                
+                                Text("Добавить фото в приложение \"Фото\"")
+                                    .font(.caption)
+                                    .foregroundColor(.secondary)
+                            }
+                            
+                            Spacer()
+                        }
+                        .padding()
+                        .background(Color(.systemBackground))
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 12)
+                                .stroke(Color(.systemGray4), lineWidth: 1)
+                        )
+                    }
+                    .buttonStyle(PlainButtonStyle())
+                    
+                    Button {
+                        showingShareSheet = true
+                    } label: {
+                        HStack(spacing: 16) {
+                            Image(systemName: "square.and.arrow.up")
+                                .font(.title2)
+                                .foregroundColor(.white)
+                                .frame(width: 40, height: 40)
+                                .background(Color.green)
+                                .cornerRadius(10)
+                            
+                            VStack(alignment: .leading, spacing: 4) {
+                                Text("Поделиться")
+                                    .font(.headline)
+                                    .foregroundColor(.primary)
+                                
+                                Text("Отправить в другие приложения")
+                                    .font(.caption)
+                                    .foregroundColor(.secondary)
+                            }
+                            
+                            Spacer()
+                        }
+                        .padding()
+                        .background(Color(.systemBackground))
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 12)
+                                .stroke(Color(.systemGray4), lineWidth: 1)
+                        )
+                    }
+                    .buttonStyle(PlainButtonStyle())
+                }
+                .padding(.horizontal)
+                
+                Spacer()
+            }
+            .padding()
+            .navigationTitle("Экспорт")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .navigationBarTrailing) {
+                    Button("Отмена") {
+                        dismiss()
+                    }
+                }
+            }
+        }
+        .sheet(isPresented: $showingShareSheet) {
+            ShareSheet(items: imageAttachments.compactMap { AttachmentManager.shared.loadImage($0) })
+        }
+    }
+    
+    private func exportToPhotos() {
+        let images = imageAttachments.compactMap { AttachmentManager.shared.loadImage($0) }
+        
+        for image in images {
+            UIImageWriteToSavedPhotosAlbum(image, nil, nil, nil)
+        }
+        
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+            dismiss()
+        }
+    }
+    
+}
+
+// MARK: - ShareSheet UIViewControllerRepresentable
+
+struct ShareSheet: UIViewControllerRepresentable {
+    let items: [Any]
+    
+    func makeUIViewController(context: Context) -> UIActivityViewController {
+        let controller = UIActivityViewController(activityItems: items, applicationActivities: nil)
+        
+        // Настройка для iPad
+        if let popover = controller.popoverPresentationController {
+            if let windowScene = UIApplication.shared.connectedScenes.first as? UIWindowScene,
+               let window = windowScene.windows.first {
+                popover.sourceView = window
+                popover.sourceRect = CGRect(x: window.bounds.midX, y: window.bounds.midY, width: 0, height: 0)
+                popover.permittedArrowDirections = []
+            }
+        }
+        
+        return controller
+    }
+    
+    func updateUIViewController(_ uiViewController: UIActivityViewController, context: Context) {
+        // No updates needed
     }
 }
 

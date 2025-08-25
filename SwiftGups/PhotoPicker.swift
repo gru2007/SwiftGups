@@ -222,7 +222,7 @@ struct PhotoSelectionSheet: View {
             .foregroundColor(.secondary)
             .padding(.bottom)
         }
-        .presentationDetents([.fraction(0.3)])
+        .presentationDetents([.medium])
         .presentationDragIndicator(.visible)
         .sheet(isPresented: $showingCamera) {
             PhotoPicker(selectedImages: $selectedImages, sourceType: .camera)

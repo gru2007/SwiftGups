@@ -2,6 +2,8 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
+	<key>NSPhotoLibraryAddUsageDescription</key>
+	<string>Для сохранения фотографий в медиатеку нужно ваше разрешение</string>
 	<key>NSAppleMusicUsageDescription</key>
 	<string>Для добавления изображений в карточку домашнего задания нужен доступ к медиатеке</string>
 	<key>NSCameraUsageDescription</key>
