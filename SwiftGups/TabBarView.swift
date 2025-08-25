@@ -483,6 +483,30 @@ struct HomeworkTab: View {
                                 }
                                 .listRowInsets(EdgeInsets(top: 8, leading: 16, bottom: 8, trailing: 16))
                                 .listRowSeparator(.hidden)
+                                .contextMenu {
+                                    Button {
+                                        homeworkToEdit = homework
+                                    } label: {
+                                        Label("Редактировать", systemImage: "pencil")
+                                    }
+                                    
+                                    Button {
+                                        homework.toggle()
+                                        try? modelContext.save()
+                                    } label: {
+                                        Label(homework.isCompleted ? "Отменить выполнение" : "Отметить выполненным", 
+                                              systemImage: homework.isCompleted ? "circle" : "checkmark.circle")
+                                    }
+                                    
+                                    Divider()
+                                    
+                                    Button(role: .destructive) {
+                                        modelContext.delete(homework)
+                                        try? modelContext.save()
+                                    } label: {
+                                        Label("Удалить", systemImage: "trash")
+                                    }
+                                }
                             }
                             .onDelete(perform: deleteHomework)
                         }
@@ -573,6 +597,30 @@ struct HomeworkTab: View {
                                     }
                                     .listRowInsets(EdgeInsets(top: 8, leading: 16, bottom: 8, trailing: 16))
                                     .listRowSeparator(.hidden)
+                                    .contextMenu {
+                                        Button {
+                                            homeworkToEdit = homework
+                                        } label: {
+                                            Label("Редактировать", systemImage: "pencil")
+                                        }
+                                        
+                                        Button {
+                                            homework.toggle()
+                                            try? modelContext.save()
+                                        } label: {
+                                            Label(homework.isCompleted ? "Отменить выполнение" : "Отметить выполненным", 
+                                                  systemImage: homework.isCompleted ? "circle" : "checkmark.circle")
+                                        }
+                                        
+                                        Divider()
+                                        
+                                        Button(role: .destructive) {
+                                            modelContext.delete(homework)
+                                            try? modelContext.save()
+                                        } label: {
+                                            Label("Удалить", systemImage: "trash")
+                                        }
+                                    }
                                 }
                                 .onDelete(perform: deleteHomework)
                             }
@@ -613,6 +661,9 @@ struct HomeworkTab: View {
         }
         .sheet(isPresented: $showingAddHomework) {
             AddHomeworkSheet()
+        }
+        .sheet(item: $homeworkToEdit) { homework in
+            EditHomeworkSheet(homework: homework)
         }
         .sheet(isPresented: $showingLessonTimes) {
             LessonTimesSheet()
@@ -940,6 +991,206 @@ struct AddHomeworkSheet: View {
         )
         
         modelContext.insert(homework)
+        
+        do {
+            try modelContext.save()
+            persistSubjectPreset()
+            dismiss()
+        } catch {
+            print("Error saving homework: \(error)")
+        }
+    }
+
+    private func updateSuggestions(for text: String) {
+        // Получаем предметы из существующих домашних заданий
+        let existingSubjects = Set(existingHomeworks.map { $0.subject.trimmingCharacters(in: .whitespacesAndNewlines) })
+            .filter { !$0.isEmpty }
+        
+        // Получаем сохраненные предметы
+        let stored = subjectPresetsStorage.split(separator: "|").map { String($0) }
+        
+        // Базовые предметы
+        let baseDefaults: [String] = [
+            "Математика","Физика","Информатика","Экономика","История",
+            "Английский язык","Программирование","Сети","Алгоритмы",
+            "Базы данных","Операционные системы","ОП ИИ"
+        ]
+        
+        // Объединяем все источники предметов
+        let allSubjects = Array(Set(Array(existingSubjects) + stored + baseDefaults))
+            .filter { !$0.isEmpty }
+            .sorted()
+        
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        if trimmed.isEmpty {
+            suggestedSubjects = allSubjects
+            showSuggestions = true
+        } else {
+            suggestedSubjects = allSubjects.filter { $0.localizedCaseInsensitiveContains(trimmed) }
+            showSuggestions = !suggestedSubjects.isEmpty
+        }
+    }
+
+    private func persistSubjectPreset() {
+        let value = subject.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !value.isEmpty else { return }
+        var existing = Set(subjectPresetsStorage.split(separator: "|").map { String($0) })
+        existing.insert(value)
+        subjectPresetsStorage = existing.sorted().joined(separator: "|")
+    }
+}
+
+struct EditHomeworkSheet: View {
+    let homework: Homework
+    @Environment(\.dismiss) private var dismiss
+    @Environment(\.modelContext) private var modelContext
+    @Query private var existingHomeworks: [Homework]
+    
+    @State private var title = ""
+    @State private var subject = ""
+    @State private var description = ""
+    @State private var dueDate = Date()
+    @State private var priority = HomeworkPriority.medium
+    @State private var isCompleted = false
+    @State private var suggestedSubjects: [String] = []
+    @State private var showSuggestions = false
+    @AppStorage("subjectPresets") private var subjectPresetsStorage: String = ""
+    
+    init(homework: Homework) {
+        self.homework = homework
+    }
+    
+    var body: some View {
+        NavigationView {
+            Form {
+                Section("Основная информация") {
+                    TextField("Название задания", text: $title)
+                    VStack(alignment: .leading, spacing: 8) {
+                        TextField("Предмет", text: $subject)
+                            .textFieldStyle(RoundedBorderTextFieldStyle())
+                            .onChange(of: subject) { newValue in
+                                updateSuggestions(for: newValue)
+                            }
+                            .onTapGesture {
+                                if subject.isEmpty {
+                                    updateSuggestions(for: "")
+                                }
+                            }
+                        
+                        if showSuggestions && !suggestedSubjects.isEmpty {
+                            VStack(alignment: .leading, spacing: 8) {
+                                Text("Предметы:")
+                                    .font(.caption)
+                                    .foregroundColor(.secondary)
+                                
+                                LazyVGrid(columns: Array(repeating: GridItem(.flexible()), count: 2), spacing: 8) {
+                                    ForEach(suggestedSubjects.prefix(8), id: \.self) { item in
+                                        Button(action: { 
+                                            subject = item
+                                            showSuggestions = false
+                                            // Haptic feedback
+                                            let impactFeedback = UIImpactFeedbackGenerator(style: .light)
+                                            impactFeedback.impactOccurred()
+                                        }) {
+                                            HStack {
+                                                Text(item)
+                                                    .font(.subheadline)
+                                                    .foregroundColor(.primary)
+                                                Spacer()
+                                                Image(systemName: "plus.circle.fill")
+                                                    .foregroundColor(.blue)
+                                                    .font(.caption)
+                                            }
+                                            .padding(.horizontal, 12)
+                                            .padding(.vertical, 8)
+                                            .background(
+                                                RoundedRectangle(cornerRadius: 8)
+                                                    .fill(Color(.systemGray6))
+                                                    .overlay(
+                                                        RoundedRectangle(cornerRadius: 8)
+                                                            .stroke(Color.blue.opacity(0.3), lineWidth: 1)
+                                                    )
+                                            )
+                                        }
+                                    }
+                                }
+                                
+                                if suggestedSubjects.count > 8 {
+                                    Text("И еще \(suggestedSubjects.count - 8) предметов...")
+                                        .font(.caption2)
+                                        .foregroundColor(.secondary)
+                                        .padding(.top, 4)
+                                }
+                            }
+                            .padding()
+                            .background(
+                                RoundedRectangle(cornerRadius: 12)
+                                    .fill(Color(.systemGray5).opacity(0.3))
+                            )
+                        }
+                    }
+                }
+                
+                Section("Описание") {
+                    TextField("Описание задания", text: $description, axis: .vertical)
+                        .lineLimit(3...6)
+                }
+                
+                Section("Статус") {
+                    Toggle("Выполнено", isOn: $isCompleted)
+                }
+                
+                Section("Детали") {
+                    DatePicker("Дата сдачи", selection: $dueDate, displayedComponents: [.date])
+                    
+                    Picker("Приоритет", selection: $priority) {
+                        ForEach(HomeworkPriority.allCases, id: \.self) { priority in
+                            Text(priority.rawValue).tag(priority)
+                        }
+                    }
+                    .pickerStyle(MenuPickerStyle())
+                }
+            }
+            .navigationTitle("Редактирование задания")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .navigationBarLeading) {
+                    Button("Отмена") {
+                        dismiss()
+                    }
+                }
+                
+                ToolbarItem(placement: .navigationBarTrailing) {
+                    Button("Сохранить") {
+                        saveHomework()
+                    }
+                    .fontWeight(.semibold)
+                    .disabled(title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || subject.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                }
+            }
+        }
+        .onAppear {
+            loadHomeworkData()
+        }
+    }
+    
+    private func loadHomeworkData() {
+        title = homework.title
+        subject = homework.subject
+        description = homework.desc
+        dueDate = homework.dueDate
+        priority = homework.effectivePriority
+        isCompleted = homework.isCompleted
+    }
+    
+    private func saveHomework() {
+        homework.title = title.trimmingCharacters(in: .whitespacesAndNewlines)
+        homework.subject = subject.trimmingCharacters(in: .whitespacesAndNewlines)
+        homework.desc = description.trimmingCharacters(in: .whitespacesAndNewlines)
+        homework.dueDate = dueDate
+        homework.priority = priority
+        homework.isCompleted = isCompleted
+        homework.updatedAt = Date()
         
         do {
             try modelContext.save()
