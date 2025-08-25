@@ -12,9 +12,10 @@ import SwiftData
 struct SwiftGupsApp: App {
     var sharedModelContainer: ModelContainer = {
         let schema = Schema([
-            Item.self,
+            User.self,
+            Homework.self
         ])
-        let modelConfiguration = ModelConfiguration(schema: schema, isStoredInMemoryOnly: false)
+        let modelConfiguration = ModelConfiguration(schema: schema, isCloudKitEnabled: true)
 
         do {
             return try ModelContainer(for: schema, configurations: [modelConfiguration])
@@ -25,7 +26,7 @@ struct SwiftGupsApp: App {
 
     var body: some Scene {
         WindowGroup {
-            ContentView()
+            MainAppView()
         }
         .modelContainer(sharedModelContainer)
     }
