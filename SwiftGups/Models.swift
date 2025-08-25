@@ -257,6 +257,22 @@ class Homework {
         attachments.append(attachment)
         updatedAt = Date()
     }
+    
+    func removeAttachment(_ attachment: String) {
+        attachments.removeAll { $0 == attachment }
+        updatedAt = Date()
+    }
+    
+    var imageAttachments: [String] {
+        return attachments.filter { attachment in
+            let lowercased = attachment.lowercased()
+            return lowercased.hasSuffix(".jpg") || 
+                   lowercased.hasSuffix(".jpeg") || 
+                   lowercased.hasSuffix(".png") || 
+                   lowercased.hasSuffix(".heic") ||
+                   lowercased.hasSuffix(".heif")
+        }
+    }
 }
 
 /// Приоритет домашнего задания

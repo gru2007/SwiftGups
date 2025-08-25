@@ -353,7 +353,7 @@ struct AboutSheet: View {
                 
                 VStack(alignment: .leading, spacing: 8) {
                     Text("Версия 1.0")
-                    Text("Неформальное приложение для удобного просмотра расписания ДВГУПС.")
+                    Text("Неформальное приложение для удобного просмотра расписания ДВГУПС. Создано с ❤️ и SwiftUI.")
                         .foregroundColor(.secondary)
                     Text("Источник данных: dvgups.ru")
                         .foregroundColor(.secondary)
@@ -800,6 +800,19 @@ struct HomeworkCard: View {
                         .foregroundColor(.secondary)
                 }
                 
+                // Иконка фотографий (если есть)
+                if !homework.imageAttachments.isEmpty {
+                    HStack(spacing: 4) {
+                        Image(systemName: "photo")
+                            .font(.caption)
+                            .foregroundColor(.blue)
+                        
+                        Text("\(homework.imageAttachments.count)")
+                            .font(.caption)
+                            .foregroundColor(.blue)
+                    }
+                }
+                
                 Spacer()
                 
                 // Дата сдачи
@@ -872,6 +885,8 @@ struct AddHomeworkSheet: View {
     @State private var priority = HomeworkPriority.medium
     @State private var suggestedSubjects: [String] = []
     @State private var showSuggestions = false
+    @State private var selectedImages: [UIImage] = []
+    @State private var showingPhotoSelection = false
     @AppStorage("subjectPresets") private var subjectPresetsStorage: String = ""
     
     var body: some View {
@@ -960,6 +975,46 @@ struct AddHomeworkSheet: View {
                     }
                     .pickerStyle(MenuPickerStyle())
                 }
+                
+                Section("Фотографии") {
+                    Button {
+                        showingPhotoSelection = true
+                    } label: {
+                        HStack(spacing: 12) {
+                            Image(systemName: "camera.fill")
+                                .font(.title2)
+                                .foregroundColor(.blue)
+                            
+                            VStack(alignment: .leading, spacing: 4) {
+                                Text("Добавить фото")
+                                    .font(.headline)
+                                    .foregroundColor(.primary)
+                                
+                                Text("Прикрепить фотографии к заданию")
+                                    .font(.caption)
+                                    .foregroundColor(.secondary)
+                            }
+                            
+                            Spacer()
+                            
+                            if !selectedImages.isEmpty {
+                                Text("\(selectedImages.count)")
+                                    .font(.caption)
+                                    .fontWeight(.semibold)
+                                    .foregroundColor(.white)
+                                    .padding(.horizontal, 8)
+                                    .padding(.vertical, 4)
+                                    .background(Color.blue)
+                                    .cornerRadius(10)
+                            }
+                        }
+                        .padding()
+                        .background(
+                            RoundedRectangle(cornerRadius: 12)
+                                .fill(Color(.systemGray6))
+                        )
+                    }
+                }
             }
             .navigationTitle("Новое задание")
             .navigationBarTitleDisplayMode(.inline)
@@ -979,6 +1034,12 @@ struct AddHomeworkSheet: View {
                 }
             }
         }
+        .sheet(isPresented: $showingPhotoSelection) {
+            PhotoSelectionSheet(showingSheet: $showingPhotoSelection, selectedImages: $selectedImages)
+        }
+        .onChange(of: selectedImages) { newImages in
+            // Новые изображения будут сохранены при нажатии "Сохранить"
+        }
     }
     
     private func saveHomework() {
@@ -989,6 +1050,13 @@ struct AddHomeworkSheet: View {
             dueDate: dueDate,
             priority: priority
         )
+        
+        // Сохраняем выбранные изображения
+        for image in selectedImages {
+            if let filename = AttachmentManager.shared.saveImage(image) {
+                homework.addAttachment(filename)
+            }
+        }
         
         modelContext.insert(homework)
         
@@ -1054,6 +1122,8 @@ struct EditHomeworkSheet: View {
     @State private var isCompleted = false
     @State private var suggestedSubjects: [String] = []
     @State private var showSuggestions = false
+    @State private var selectedImages: [UIImage] = []
+    @State private var showingPhotoSelection = false
     @AppStorage("subjectPresets") private var subjectPresetsStorage: String = ""
     
     init(homework: Homework) {
@@ -1150,6 +1220,54 @@ struct EditHomeworkSheet: View {
                     }
                     .pickerStyle(MenuPickerStyle())
                 }
+                
+                Section("Фотографии") {
+                    Button {
+                        showingPhotoSelection = true
+                    } label: {
+                        HStack(spacing: 12) {
+                            Image(systemName: "camera.fill")
+                                .font(.title2)
+                                .foregroundColor(.blue)
+                            
+                            VStack(alignment: .leading, spacing: 4) {
+                                Text("Добавить фото")
+                                    .font(.headline)
+                                    .foregroundColor(.primary)
+                                
+                                Text("Прикрепить фотографии к заданию")
+                                    .font(.caption)
+                                    .foregroundColor(.secondary)
+                            }
+                            
+                            Spacer()
+                            
+                            let totalPhotos = selectedImages.count + homework.imageAttachments.count
+                            if totalPhotos > 0 {
+                                Text("\(totalPhotos)")
+                                    .font(.caption)
+                                    .fontWeight(.semibold)
+                                    .foregroundColor(.white)
+                                    .padding(.horizontal, 8)
+                                    .padding(.vertical, 4)
+                                    .background(Color.blue)
+                                    .cornerRadius(10)
+                            }
+                        }
+                        .padding()
+                        .background(
+                            RoundedRectangle(cornerRadius: 12)
+                                .fill(Color(.systemGray6))
+                        )
+                    }
+                    
+                    // Отображение существующих фотографий
+                    if !homework.imageAttachments.isEmpty {
+                        AttachmentsView(attachments: homework.imageAttachments) { attachment in
+                            homework.removeAttachment(attachment)
+                        }
+                    }
+                }
             }
             .navigationTitle("Редактирование задания")
             .navigationBarTitleDisplayMode(.inline)
@@ -1168,6 +1286,12 @@ struct EditHomeworkSheet: View {
                     .disabled(title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || subject.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                 }
             }
+        }
+        .sheet(isPresented: $showingPhotoSelection) {
+            PhotoSelectionSheet(showingSheet: $showingPhotoSelection, selectedImages: $selectedImages)
+        }
+        .onChange(of: selectedImages) { newImages in
+            // Новые изображения будут сохранены при нажатии "Сохранить"
         }
         .onAppear {
             loadHomeworkData()
@@ -1191,6 +1315,13 @@ struct EditHomeworkSheet: View {
         homework.priority = priority
         homework.isCompleted = isCompleted
         homework.updatedAt = Date()
+        
+        // Сохраняем новые изображения
+        for image in selectedImages {
+            if let filename = AttachmentManager.shared.saveImage(image) {
+                homework.addAttachment(filename)
+            }
+        }
         
         do {
             try modelContext.save()

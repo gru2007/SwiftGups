@@ -2,6 +2,10 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
+	<key>NSAppleMusicUsageDescription</key>
+	<string>Для добавления изображений в карточку домашнего задания нужен доступ к медиатеке</string>
+	<key>NSCameraUsageDescription</key>
+	<string>Для добавления изображений в карточку домашнего задания нужен доступ к камере</string>
 	<key>NSUbiquitousContainers</key>
 	<dict>
 		<key>iCloud.$(CFBundleIdentifier)</key>
