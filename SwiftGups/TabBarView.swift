@@ -353,7 +353,7 @@ struct AboutSheet: View {
                 
                 VStack(alignment: .leading, spacing: 8) {
                     Text("Версия 1.0")
-                    Text("Неформальное приложение для удобного просмотра расписания ДВГУПС. Создано с ❤️ и SwiftUI.")
+                    Text("Неофициальное приложение по ДВГУПС. Создано с ❤️ и SwiftUI.")
                         .foregroundColor(.secondary)
                     Text("Источник данных: dvgups.ru")
                         .foregroundColor(.secondary)
