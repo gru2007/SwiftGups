@@ -151,10 +151,25 @@ struct ScheduleTab: View {
     let isInSplitView: Bool
     @StateObject private var scheduleService = ScheduleService()
     @State private var showingLessonTimes = false
+
+    // Проверяем, указал ли пользователь группу
+    private var hasGroup: Bool { !currentUser.groupId.isEmpty }
     
     var body: some View {
         SwiftUI.Group {
-            if isInSplitView {
+            if !hasGroup {
+                // Сообщение, если группа не выбрана
+                VStack(spacing: 16) {
+                    Text("Группа не выбрана")
+                        .font(.headline)
+
+                    Text("Откройте вкладку «Профиль» и укажите группу, чтобы просматривать расписание.")
+                        .font(.subheadline)
+                        .foregroundColor(.secondary)
+                        .multilineTextAlignment(.center)
+                }
+                .padding()
+            } else if isInSplitView {
                 // iPad layout - без NavigationView (уже в NavigationSplitView)
                 VStack(spacing: 16) {
                     // Основной контент расписания
@@ -199,16 +214,22 @@ struct ScheduleTab: View {
         }
         .onAppear {
             // Автоматически выбираем факультет и группу пользователя
+            guard hasGroup else { return }
             setupScheduleForUser()
         }
     }
     
     private func setupScheduleForUser() {
+        guard hasGroup else {
+            print("⚠️ У пользователя не выбрана группа, расписание не загружается")
+            return
+        }
+
         guard let faculty = Faculty.allFaculties.first(where: { $0.id == currentUser.facultyId }) else {
             print("❌ Faculty not found for user: \(currentUser.facultyId)")
             return
         }
-        
+
         print("✅ Setting up schedule for user: \(currentUser.name), faculty: \(faculty.name), group: \(currentUser.groupId)")
         
         // Устанавливаем факультет напрямую без вызова selectFaculty (чтобы избежать двойной загрузки)
