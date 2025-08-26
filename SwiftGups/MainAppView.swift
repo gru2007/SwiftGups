@@ -45,6 +45,7 @@ struct RegistrationView: View {
     @State private var showingProgress = false
     @State private var progressStep = 0
     @State private var errorMessage: String?
+    @State private var skipGroupSelection = false // Пропуск выбора группы при недоступности сайта
     
     private var isIPad: Bool {
         horizontalSizeClass == .regular
@@ -188,9 +189,11 @@ struct RegistrationView: View {
     }
     
     private var isFormValid: Bool {
+        // Форма валидна, если введено имя, выбран факультет
+        // и выбрана группа или пользователь решил пропустить этот шаг
         !name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty &&
         selectedFaculty != nil &&
-        selectedGroup != nil
+        (selectedGroup != nil || skipGroupSelection)
     }
     
     @ViewBuilder
@@ -211,16 +214,47 @@ struct RegistrationView: View {
             )
             
             // Выбор группы
-            if selectedFaculty != nil {
+            if selectedFaculty != nil && !skipGroupSelection {
                 GroupPickerView(
                     selectedGroup: $selectedGroup,
                     searchText: $searchText,
                     scheduleService: scheduleService
                 )
+
+                // Кнопка пропуска выбора группы
+                Button("Сайт недоступен? Продолжить без группы") {
+                    skipGroupSelection = true
+                    selectedGroup = nil
+                    errorMessage = nil
+                }
+                .font(.caption)
+                .foregroundColor(.blue)
+            } else if skipGroupSelection {
+                // Сообщение о пропуске выбора группы
+                VStack(alignment: .leading, spacing: 8) {
+                    HStack {
+                        Image(systemName: "person.3.fill")
+                            .foregroundColor(.blue)
+                        Text("Группа")
+                            .font(.headline)
+                            .foregroundColor(.primary)
+                    }
+
+                    Text("Выбор группы пропущен. Вы сможете выбрать её позже в профиле.")
+                        .font(.subheadline)
+                        .foregroundColor(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+
+                    Button("Выбрать группу") {
+                        skipGroupSelection = false
+                    }
+                    .font(.caption)
+                    .foregroundColor(.blue)
+                }
             }
-            
+
             // Сообщение об ошибке
-            if let errorMessage = errorMessage {
+            if let errorMessage = errorMessage, !skipGroupSelection {
                 ErrorBanner(message: errorMessage) {
                     self.errorMessage = nil
                 }
@@ -259,31 +293,31 @@ struct RegistrationView: View {
     }
     
     private func completeRegistration() {
-        guard let faculty = selectedFaculty,
-              let group = selectedGroup else { return }
-        
+        // Факультет обязателен
+        guard let faculty = selectedFaculty else { return }
+
         let trimmedName = name.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmedName.isEmpty else {
             errorMessage = "Пожалуйста, введите ваше имя"
             return
         }
-        
+
         showingProgress = true
-        
-        // Создаем пользователя
+
+        // Создаем пользователя, даже если группа не выбрана
         let newUser = User(
             name: trimmedName,
             facultyId: faculty.id,
             facultyName: faculty.name,
-            groupId: group.id,
-            groupName: group.name
+            groupId: selectedGroup?.id ?? "",
+            groupName: selectedGroup?.name ?? ""
         )
-        
+
         modelContext.insert(newUser)
-        
+
         do {
             try modelContext.save()
-            
+
             // Небольшая задержка для показа анимации
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
                 showingProgress = false
