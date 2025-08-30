@@ -763,7 +763,7 @@ struct HomeworkCard: View {
     }
     
     private var priorityColor: Color {
-        switch homework.effectivePriority {
+        switch homework.priority {
         case .low: return .gray
         case .medium: return .blue
         case .high: return .orange
@@ -869,7 +869,7 @@ struct HomeworkCard: View {
                         .fill(priorityColor)
                         .frame(width: 8, height: 8)
                     
-                    Text(homework.effectivePriority.rawValue)
+                    Text(homework.priority.rawValue)
                         .font(.caption)
                         .foregroundColor(.secondary)
                 }
@@ -1618,7 +1618,7 @@ struct EditHomeworkSheet: View {
         subject = homework.subject
         description = homework.desc
         dueDate = homework.dueDate
-        priority = homework.effectivePriority
+        priority = homework.priority
         isCompleted = homework.isCompleted
     }
     
@@ -1629,7 +1629,6 @@ struct EditHomeworkSheet: View {
         homework.dueDate = dueDate
         homework.priority = priority
         homework.isCompleted = isCompleted
-        homework.updatedAt = Date()
         
         // Сохраняем новые изображения
         for image in selectedImages {

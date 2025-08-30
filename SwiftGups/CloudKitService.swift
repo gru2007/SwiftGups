@@ -1,68 +1,62 @@
 import SwiftUI
 import CloudKit
-import SwiftData
 
-/// Сервис для управления состоянием CloudKit
+/// Упрощенный сервис для отображения статуса CloudKit
+/// SwiftData автоматически управляет синхронизацией
 @MainActor
 class CloudKitService: ObservableObject {
-    @Published var isCloudKitAvailable: Bool = false
     @Published var accountStatus: CKAccountStatus = .couldNotDetermine
-    @Published var syncStatus: SyncStatus = .unknown
     @Published var showCloudKitAlert: Bool = false
     @AppStorage("iCloudAlertDismissed") private var iCloudAlertDismissed: Bool = false
-    @Published var lastSyncTime: Date? = nil
-    @Published var isSyncing: Bool = false
     
-    enum SyncStatus {
-        case unknown
-        case syncing
-        case synced
-        case error(String)
-        case localOnly
-        
-        var description: String {
-            switch self {
-            case .unknown:
-                return "Проверка статуса синхронизации..."
-            case .syncing:
-                return "Синхронизация с iCloud..."
-            case .synced:
-                return "Синхронизировано с iCloud"
-            case .error(let message):
-                return "Ошибка синхронизации: \(message)"
-            case .localOnly:
-                return "Хранение только локально"
-            }
+    var isCloudKitAvailable: Bool {
+        return accountStatus == .available
+    }
+    
+    var statusDescription: String {
+        switch accountStatus {
+        case .available:
+            return "Синхронизация с iCloud активна"
+        case .noAccount:
+            return "Войдите в iCloud для синхронизации"
+        case .restricted:
+            return "iCloud ограничен настройками"
+        case .couldNotDetermine:
+            return "Проверка статуса iCloud..."
+        case .temporarilyUnavailable:
+            return "iCloud временно недоступен"
+        @unknown default:
+            return "Неизвестный статус iCloud"
         }
-        
-        var icon: String {
-            switch self {
-            case .unknown:
-                return "questionmark.circle"
-            case .syncing:
-                return "arrow.clockwise"
-            case .synced:
-                return "icloud.and.arrow.up"
-            case .error:
-                return "exclamationmark.triangle"
-            case .localOnly:
-                return "internaldrive"
-            }
+    }
+    
+    var statusIcon: String {
+        switch accountStatus {
+        case .available:
+            return "icloud.and.arrow.up"
+        case .noAccount, .restricted:
+            return "icloud.slash"
+        case .couldNotDetermine:
+            return "questionmark.circle"
+        case .temporarilyUnavailable:
+            return "icloud.and.arrow.down"
+        @unknown default:
+            return "exclamationmark.triangle"
         }
-        
-        var color: Color {
-            switch self {
-            case .unknown:
-                return .gray
-            case .syncing:
-                return .blue
-            case .synced:
-                return .green
-            case .error:
-                return .red
-            case .localOnly:
-                return .orange
-            }
+    }
+    
+    var statusColor: Color {
+        switch accountStatus {
+        case .available:
+            return .green
+        case .noAccount, .restricted:
+            return .orange
+        case .couldNotDetermine:
+            return .gray
+        case .temporarilyUnavailable:
+            return .yellow
+        @unknown default:
+            return .red
         }
     }
     
@@ -71,89 +65,49 @@ class CloudKitService: ObservableObject {
     
     init() {
         Task {
-            await checkCloudKitAvailability()
+            await checkAccountStatus()
         }
-        // Подписка на изменения аккаунта iCloud (работает на реальных устройствах)
+        // Подписка на изменения аккаунта iCloud
         accountStatusObserver = NotificationCenter.default.addObserver(
             forName: NSNotification.Name.CKAccountChanged,
             object: nil,
             queue: .main
         ) { [weak self] _ in
             guard let self = self else { return }
-            Task { await self.checkCloudKitAvailability() }
+            Task { await self.checkAccountStatus() }
         }
     }
     
-    func checkCloudKitAvailability() async {
+    func checkAccountStatus() async {
         do {
             let status = try await container.accountStatus()
             accountStatus = status
             
             switch status {
             case .available:
-                isCloudKitAvailable = true
-                await performInitialSync()
-                print("✅ iCloud доступен - синхронизация включена")
+                print("✅ iCloud доступен - SwiftData автоматически синхронизирует данные")
                 
             case .noAccount:
-                isCloudKitAvailable = false
-                syncStatus = .localOnly
                 showCloudKitAlert = !iCloudAlertDismissed
-                print("⚠️ Нет iCloud аккаунта - только локальное хранение")
+                print("⚠️ Нет iCloud аккаунта - данные сохраняются локально")
                 
             case .restricted:
-                isCloudKitAvailable = false
-                syncStatus = .localOnly
                 showCloudKitAlert = !iCloudAlertDismissed
-                print("⚠️ iCloud ограничен - только локальное хранение")
+                print("⚠️ iCloud ограничен - данные сохраняются локально")
                 
             case .couldNotDetermine:
-                isCloudKitAvailable = false
-                syncStatus = .error("Не удалось определить статус iCloud")
                 print("❌ Не удалось определить статус iCloud")
                 
             case .temporarilyUnavailable:
-                isCloudKitAvailable = false
-                syncStatus = .localOnly
                 print("⚠️ iCloud временно недоступен")
                 
             @unknown default:
-                isCloudKitAvailable = false
-                syncStatus = .error("Неизвестный статус iCloud")
                 print("❌ Неизвестный статус iCloud")
             }
             
         } catch {
-            isCloudKitAvailable = false
-            syncStatus = .error(error.localizedDescription)
             print("❌ Ошибка проверки iCloud: \(error.localizedDescription)")
         }
-    }
-    
-    /// Выполняет принудительную синхронизацию с iCloud
-    func forceSyncWithiCloud() async {
-        guard isCloudKitAvailable else {
-            print("⚠️ CloudKit недоступен для синхронизации")
-            return
-        }
-        
-        isSyncing = true
-        syncStatus = .syncing
-        
-        await performInitialSync()
-        
-        isSyncing = false
-        lastSyncTime = Date()
-    }
-    
-    private func performInitialSync() async {
-        syncStatus = .syncing
-        
-        // Имитируем синхронизацию - реальная синхронизация происходит автоматически через SwiftData
-        try? await Task.sleep(nanoseconds: 1_000_000_000) // 1 секунда
-        
-        syncStatus = .synced
-        lastSyncTime = Date()
     }
     
     func dismissAlert() {
@@ -181,19 +135,12 @@ class CloudKitService: ObservableObject {
     var alertMessage: String {
         switch accountStatus {
         case .noAccount:
-            return "Для синхронизации данных между устройствами войдите в iCloud в настройках iOS. Сейчас данные сохраняются только локально на этом устройстве и не будут потеряны."
+            return "Для синхронизации данных между устройствами войдите в iCloud в настройках iOS. Данные сохраняются локально и автоматически синхронизируются при подключении к iCloud."
         case .restricted:
-            return "Доступ к iCloud ограничен настройками устройства. Данные будут сохраняться только локально и не будут потеряны."
+            return "Доступ к iCloud ограничен настройками устройства. Данные сохраняются локально и автоматически синхронизируются при разрешении доступа."
         default:
-            return "Не удалось подключиться к iCloud. Данные сохраняются локально и не будут потеряны."
+            return "Не удалось подключиться к iCloud. Данные сохраняются локально и автоматически синхронизируются при восстановлении связи."
         }
-    }
-    
-    /// Проверяет целостность локальных данных
-    func checkLocalDataIntegrity() -> (hasLocalData: Bool, userCount: Int, homeworkCount: Int) {
-        // Эта функция поможет диагностировать проблемы с данными
-        // В реальном приложении можно добавить дополнительную логику
-        return (hasLocalData: true, userCount: 0, homeworkCount: 0)
     }
 }
 
@@ -203,48 +150,35 @@ struct CloudKitStatusView: View {
     @ObservedObject var cloudKitService: CloudKitService
     
     var body: some View {
-        VStack(spacing: 8) {
-            HStack(spacing: 8) {
-                Image(systemName: cloudKitService.syncStatus.icon)
-                    .foregroundColor(cloudKitService.syncStatus.color)
+        HStack(spacing: 8) {
+            Image(systemName: cloudKitService.statusIcon)
+                .foregroundColor(cloudKitService.statusColor)
+                .font(.caption)
+            
+            VStack(alignment: .leading, spacing: 2) {
+                Text(cloudKitService.statusDescription)
                     .font(.caption)
-                    .symbolEffect(.pulse, isActive: cloudKitService.isSyncing)
+                    .foregroundColor(.secondary)
                 
-                                    VStack(alignment: .leading, spacing: 2) {
-                        Text(cloudKitService.syncStatus.description)
-                            .font(.caption)
-                            .foregroundColor(.secondary)
-                        
-                        if let lastSyncTime = cloudKitService.lastSyncTime {
-                            Text("Последняя синхронизация: \(lastSyncTime, format: .dateTime.hour().minute())")
-                                .font(.caption2)
-                                .foregroundColor(.secondary)
-                        } else if !cloudKitService.isCloudKitAvailable {
-                            Text("Данные сохраняются локально и защищены от потери")
-                                .font(.caption2)
-                                .foregroundColor(.green)
-                        }
-                    }
-                
-                Spacer()
-                
-                if cloudKitService.isSyncing {
-                    ProgressView()
-                        .scaleEffect(0.7)
-                } else if cloudKitService.isCloudKitAvailable {
-                    Button("Синхр.") {
-                        Task { await cloudKitService.forceSyncWithiCloud() }
-                    }
-                    .font(.caption)
-                    .foregroundColor(.blue)
-                    .disabled(cloudKitService.isSyncing)
+                if cloudKitService.isCloudKitAvailable {
+                    Text("SwiftData автоматически синхронизирует данные")
+                        .font(.caption2)
+                        .foregroundColor(.green)
                 } else {
-                    Button("Проверить") {
-                        Task { await cloudKitService.checkCloudKitAvailability() }
-                    }
-                    .font(.caption)
-                    .foregroundColor(.blue)
+                    Text("Данные сохраняются локально и защищены")
+                        .font(.caption2)
+                        .foregroundColor(.orange)
                 }
+            }
+            
+            Spacer()
+            
+            if !cloudKitService.isCloudKitAvailable {
+                Button("Проверить") {
+                    Task { await cloudKitService.checkAccountStatus() }
+                }
+                .font(.caption)
+                .foregroundColor(.blue)
             }
         }
         .padding(.horizontal, 12)

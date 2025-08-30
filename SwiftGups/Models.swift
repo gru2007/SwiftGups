@@ -3,6 +3,19 @@ import SwiftData
 
 // MARK: - Модели данных для расписания вуза
 
+/*
+ ВАЖНО: Синхронизация с CloudKit
+ 
+ Модели User и Homework настроены для автоматической синхронизации с iCloud:
+ - Все атрибуты имеют значения по умолчанию (требование CloudKit)
+ - Удалены unique constraints - CloudKit их не поддерживает
+ - Используется .private CloudKit база данных для персональных данных
+ - CloudKit автоматически разрешает конфликты при синхронизации между устройствами
+ 
+ Синхронизация происходит автоматически при наличии активного iCloud аккаунта.
+ При отсутствии iCloud данные сохраняются локально и синхронизируются при подключении.
+ */
+
 /// Факультет/Институт
 struct Faculty: Codable, Identifiable, Hashable {
     let id: String
@@ -179,7 +192,7 @@ extension Date {
 
 // MARK: - Модели пользователя и персональных данных
 
-/// Пользователь приложения (хранится локально с SwiftData)
+/// Пользователь приложения (синхронизируется через iCloud)
 @Model
 class User {
     var id: UUID = UUID()
@@ -189,7 +202,6 @@ class User {
     var groupId: String = ""
     var groupName: String = ""
     var createdAt: Date = Date()
-    var updatedAt: Date = Date()
     var isFirstTime: Bool = true
     
     init(name: String, facultyId: String, facultyName: String, groupId: String, groupName: String) {
@@ -200,20 +212,17 @@ class User {
         self.groupId = groupId
         self.groupName = groupName
         self.createdAt = Date()
-        self.updatedAt = Date()
         self.isFirstTime = true
     }
     
     func updateGroup(groupId: String, groupName: String) {
         self.groupId = groupId
         self.groupName = groupName
-        self.updatedAt = Date()
     }
     
     func updateFaculty(facultyId: String, facultyName: String) {
         self.facultyId = facultyId
         self.facultyName = facultyName
-        self.updatedAt = Date()
     }
 }
 
@@ -227,8 +236,7 @@ class Homework {
     var dueDate: Date = Date()
     var isCompleted: Bool = false
     var createdAt: Date = Date()
-    var updatedAt: Date = Date()
-    var priority: HomeworkPriority?
+    var priority: HomeworkPriority = HomeworkPriority.medium
     var attachments: [String] = [] // Пути к файлам или ссылки
     
     init(title: String, subject: String, description: String, dueDate: Date, priority: HomeworkPriority = .medium) {
@@ -239,28 +247,20 @@ class Homework {
         self.dueDate = dueDate
         self.isCompleted = false
         self.createdAt = Date()
-        self.updatedAt = Date()
         self.priority = priority
         self.attachments = []
     }
     
-    var effectivePriority: HomeworkPriority {
-        return priority ?? .medium
-    }
-    
     func toggle() {
         isCompleted.toggle()
-        updatedAt = Date()
     }
     
     func addAttachment(_ attachment: String) {
         attachments.append(attachment)
-        updatedAt = Date()
     }
     
     func removeAttachment(_ attachment: String) {
         attachments.removeAll { $0 == attachment }
-        updatedAt = Date()
     }
     
     var imageAttachments: [String] {
