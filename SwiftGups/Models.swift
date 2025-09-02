@@ -1,5 +1,6 @@
 import Foundation
 import SwiftData
+import CloudKit
 
 // MARK: - Модели данных для расписания вуза
 
@@ -122,6 +123,36 @@ struct Lesson: Codable, Identifiable {
         self.groups = groups
         self.onlineLink = onlineLink
         self.isEvenWeek = isEvenWeek
+    }
+    
+    /// Формирует текст для обмена
+    var shareText: String {
+        var text = "📅 Пара №\(pairNumber)\n"
+        text += "🕰 Время: \(timeStart) - \(timeEnd)\n"
+        text += "📚 \(type.rawValue): \(subject)\n"
+        
+        if let room = room, !room.isEmpty {
+            text += "📍 Аудитория: \(room)\n"
+        }
+        
+        if let teacher = teacher, !teacher.name.isEmpty {
+            text += "👨‍🏫 Преподаватель: \(teacher.name)\n"
+            if let email = teacher.email, !email.isEmpty {
+                text += "✉️ Email: \(email)\n"
+            }
+        }
+        
+        if !groups.isEmpty {
+            text += "👥 Группы: \(groups.joined(separator: ", "))\n"
+        }
+        
+        if let onlineLink = onlineLink, !onlineLink.isEmpty {
+            text += "💻 Дистанционно: \(onlineLink)\n"
+        }
+        
+        text += "\n🎓 Приложение SwiftGups"
+        
+        return text
     }
 }
 
@@ -292,6 +323,23 @@ enum HomeworkPriority: String, Codable, CaseIterable {
     }
 }
 
+/// Расширение для коллекции пар
+extension Collection where Element == Lesson {
+    /// Возвращает количество пар по типам
+    var lessonTypeStats: [LessonType: Int] {
+        var stats: [LessonType: Int] = [:]
+        for lesson in self {
+            stats[lesson.type, default: 0] += 1
+        }
+        return stats
+    }
+    
+    /// Возвращает пары с онлайн-ссылками
+    var onlineLessons: [Element] {
+        return self.filter { $0.onlineLink != nil && !$0.onlineLink!.isEmpty }
+    }
+}
+
 /// Время пар (расписание звонков)
 struct LessonTime: Identifiable, Codable {
     let id = UUID()
@@ -361,6 +409,12 @@ extension String {
             return URL(string: String(self[range]))
         }
     }
+    
+    /// Сокращает текст до указанной длины
+    func truncated(to length: Int) -> String {
+        guard self.count > length else { return self }
+        return String(self.prefix(length)) + "..."
+    }
 }
 
 // MARK: - Новости
@@ -417,6 +471,26 @@ struct NewsResponse: Codable {
     }
 }
 
+/// Расширение для расписания
+extension Schedule {
+    /// Общая статистика по типам пар
+    var overallStats: [LessonType: Int] {
+        let allLessons = days.flatMap { $0.lessons }
+        return allLessons.lessonTypeStats
+    }
+    
+    /// Общее количество пар
+    var totalLessonsCount: Int {
+        return days.reduce(0) { $0 + $1.lessons.count }
+    }
+    
+    /// Количество онлайн пар
+    var onlineLessonsCount: Int {
+        let allLessons = days.flatMap { $0.lessons }
+        return allLessons.onlineLessons.count
+    }
+}
+
 /// Ошибки загрузки новостей
 enum NewsError: Error, LocalizedError {
     case invalidURL
@@ -438,4 +512,126 @@ enum NewsError: Error, LocalizedError {
     }
 }
 
+// MARK: - Connect функционал
+
+/// Модель лайков для CloudKit Public Database
+struct ConnectLike: Codable {
+    let id: String
+    let timestamp: Date
+    let deviceIdentifier: String // для предотвращения спама
+    
+    init(deviceIdentifier: String) {
+        self.id = UUID().uuidString
+        self.timestamp = Date()
+        self.deviceIdentifier = deviceIdentifier
+    }
+    
+    /// Преобразование в CloudKit CKRecord
+    func toCKRecord() -> CKRecord {
+        let record = CKRecord(recordType: "ConnectLike")
+        record["timestamp"] = timestamp as NSDate
+        record["deviceIdentifier"] = deviceIdentifier as NSString
+        return record
+    }
+    
+    /// Создание из CloudKit CKRecord
+    static func fromCKRecord(_ record: CKRecord) -> ConnectLike? {
+        guard let timestamp = record["timestamp"] as? Date,
+              let deviceIdentifier = record["deviceIdentifier"] as? String else {
+            return nil
+        }
+        
+        return ConnectLike(
+            id: record.recordID.recordName,
+            timestamp: timestamp,
+            deviceIdentifier: deviceIdentifier
+        )
+    }
+    
+    private init(id: String, timestamp: Date, deviceIdentifier: String) {
+        self.id = id
+        self.timestamp = timestamp
+        self.deviceIdentifier = deviceIdentifier
+    }
+}
+
+/// Статистика Connect
+struct ConnectStats: Codable {
+    let totalLikes: Int
+    let lastUpdated: Date
+    let bridgesBuilt: Int // метафора соединений
+    
+    init(totalLikes: Int = 0, bridgesBuilt: Int = 0) {
+        self.totalLikes = totalLikes
+        self.lastUpdated = Date()
+        self.bridgesBuilt = bridgesBuilt
+    }
+    
+    var bridgesBuiltText: String {
+        let bridges = bridgesBuilt
+        switch bridges {
+        case 0:
+            return "Мы готовы к соединению"
+        case 1:
+            return "Первый мост построен"
+        case 2...5:
+            return "Начальная связь установлена"
+        case 6...10:
+            return "Первые мосты построены"
+        case 11...25:
+            return "Соединения крепнут"
+        case 26...50:
+            return "Сеть соединений расширяется"
+        case 51...100:
+            return "Мосты объединяют всех"
+        case 101...200:
+            return "Мощная сеть сформирована"
+        case 201...350:
+            return "Неразрушимые связи"
+        case 351...500:
+            return "Коммюнити процветает"
+        case 501...750:
+            return "Мастер создания связей"
+        case 751...1000:
+            return "Легендарный строитель мостов"
+        case 1001...1500:
+            return "Архитектор связей"
+        case 1501...2000:
+            return "Мы создали сильное сообщество"
+        case 2001...3000:
+            return "Гений коннекта"
+        case 3001...5000:
+            return "Мы переосмыслили социальные связи"
+        case 5001...10000:
+            return "Лидер цифровой эволюции"
+        default:
+            return "Мы создали новую реальность"
+        }
+    }
+    
+    /// Проверяет, достиг ли пользователь специального уровня для пасхалки Кодзимы
+    var hasKojimaAchievement: Bool {
+        return bridgesBuilt >= 50  // Пониженный порог для тестирования (было 42)
+    }
+    
+    /// Текст достижения для показа специального статуса
+    var achievementLevel: String {
+        switch bridgesBuilt {
+        case 0...5:
+            return "Новичок"
+        case 6...25:
+            return "Строитель"
+        case 26...100:
+            return "Архитектор"
+        case 101...500:
+            return "Мастер"
+        case 501...1000:
+            return "Легенда"
+        case 1001...2000:
+            return "Миф"
+        default:
+            return "Бог Коннекта"
+        }
+    }
+}
 

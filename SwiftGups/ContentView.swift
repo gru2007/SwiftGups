@@ -685,32 +685,25 @@ struct LessonView: View {
                                 .foregroundColor(.secondary)
                                 .lineLimit(1)
                         }
+                        
+                        // Индикатор онлайн занятия (компактно)
+                        if lesson.onlineLink != nil && !lesson.onlineLink!.isEmpty {
+                            Image(systemName: "video.circle.fill")
+                                .font(.caption2)
+                                .foregroundColor(.orange)
+                        }
                     }
                     .frame(width: 60, alignment: .trailing)
                 }
-                
-                // Онлайн-ссылка (если есть)
-                if let onlineLink = lesson.onlineLink, !onlineLink.isEmpty {
-                    HStack {
-                        Image(systemName: "video.circle.fill")
-                            .font(.system(size: 10))
-                            .foregroundColor(.orange)
-                        
-                        Text(onlineLink)
-                            .font(.system(size: 9))
-                            .foregroundColor(.orange)
-                            .lineLimit(1)
-                    }
-                    .padding(.leading, 50)
-                }
             }
-            .padding(8)
+            .padding(10)
             .background(
-                RoundedRectangle(cornerRadius: 8)
-                    .fill(lessonTypeColor.opacity(0.1))
+                RoundedRectangle(cornerRadius: 12)
+                    .fill(Color(.systemBackground))
+                    .shadow(color: .black.opacity(0.08), radius: 4, x: 0, y: 2)
                     .overlay(
-                        RoundedRectangle(cornerRadius: 8)
-                            .stroke(lessonTypeColor.opacity(0.3), lineWidth: 1)
+                        RoundedRectangle(cornerRadius: 12)
+                            .stroke(lessonTypeColor.opacity(0.4), lineWidth: 1.5)
                     )
             )
         } else {
@@ -775,38 +768,58 @@ struct LessonView: View {
                         }
                     }
                     
-                    // Аудитория
-                    if let room = lesson.room, !room.isEmpty {
-                        if room.containsURL {
-                            ClickableLinkText(text: "📍 \(room)")
-                                .font(.caption)
-                        } else {
-                            Text("📍 \(room)")
-                                .font(.caption)
-                                .foregroundColor(.secondary)
+                    // Аудитория и индикаторы
+                    HStack(spacing: 8) {
+                        if let room = lesson.room, !room.isEmpty {
+                            if room.containsURL {
+                                ClickableLinkText(text: "📍 \(room)")
+                                    .font(.caption)
+                            } else {
+                                Text("📍 \(room)")
+                                    .font(.caption)
+                                    .foregroundColor(.secondary)
+                            }
                         }
-                    }
-                    
-                    // Онлайн информация
-                    if let onlineLink = lesson.onlineLink, !onlineLink.isEmpty {
-                        if onlineLink.containsURL {
-                            ClickableLinkText(text: "💻 \(onlineLink)")
+                        
+                        /* // Индикатор онлайн занятия
+                        if lesson.onlineLink != nil && !lesson.onlineLink!.isEmpty {
+                            Text("💻 Онлайн")
                                 .font(.caption)
-                        } else {
-                            Text("💻 \(onlineLink)")
+                                .foregroundColor(.orange)
+                                .padding(.horizontal, 6)
+                                .padding(.vertical, 2)
+                                .background(
+                                    RoundedRectangle(cornerRadius: 4)
+                                        .fill(Color.orange.opacity(0.1))
+                                )
+                        } */
+                        
+                        // Индикатор групп (если больше одной)
+                        if lesson.groups.count > 1 {
+                            Text("👥 +\(lesson.groups.count - 1)")
                                 .font(.caption)
                                 .foregroundColor(.blue)
+                                .padding(.horizontal, 6)
+                                .padding(.vertical, 2)
+                                .background(
+                                    RoundedRectangle(cornerRadius: 4)
+                                        .fill(Color.blue.opacity(0.1))
+                                )
                         }
                     }
                 }
                 
                 Spacer()
             }
-            .padding()
+            .padding(16)
             .background(
-                RoundedRectangle(cornerRadius: 8)
+                RoundedRectangle(cornerRadius: 12)
                     .fill(Color(.systemBackground))
-                    .shadow(color: .black.opacity(0.05), radius: 2, x: 0, y: 1)
+                    .shadow(color: .black.opacity(0.1), radius: 6, x: 0, y: 3)
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 12)
+                            .stroke(Color(.systemGray4), lineWidth: 0.5)
+                    )
             )
         }
     }
@@ -965,10 +978,14 @@ struct LessonDetailSheet: View {
                                 .foregroundColor(.secondary)
                         }
                     }
-                    .padding()
+                    .padding(16)
                     .background(
                         RoundedRectangle(cornerRadius: 12)
-                            .fill(lessonTypeColor.opacity(0.1))
+                            .fill(lessonTypeColor.opacity(0.08))
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 12)
+                                    .stroke(lessonTypeColor.opacity(0.2), lineWidth: 1)
+                            )
                     )
                     
                     // Основная информация
@@ -1011,6 +1028,16 @@ struct LessonDetailSheet: View {
                             }
                         }
                         
+                        // Группы на паре
+                        if !lesson.groups.isEmpty {
+                            InfoRow(
+                                icon: "person.3",
+                                title: "Группы",
+                                value: lesson.groups.joined(separator: ", "),
+                                color: .blue
+                            )
+                        }
+                        
                         // Онлайн-ссылка
                         if let onlineLink = lesson.onlineLink, !onlineLink.isEmpty {
                             InfoRow(
@@ -1022,11 +1049,15 @@ struct LessonDetailSheet: View {
                             )
                         }
                     }
-                    .padding()
+                    .padding(16)
                     .background(
                         RoundedRectangle(cornerRadius: 12)
                             .fill(Color(.systemBackground))
-                            .shadow(color: .black.opacity(0.05), radius: 5, x: 0, y: 2)
+                            .shadow(color: .black.opacity(0.1), radius: 8, x: 0, y: 4)
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 12)
+                                    .stroke(Color(.systemGray5), lineWidth: 0.5)
+                            )
                     )
                     
                     Spacer()
@@ -1036,10 +1067,21 @@ struct LessonDetailSheet: View {
             .navigationTitle("Детали пары")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
+                ToolbarItem(placement: .navigationBarLeading) {
+                    ShareLink(
+                        item: lesson.shareText,
+                        subject: Text("Информация о паре")
+                    ) {
+                        Image(systemName: "square.and.arrow.up")
+                            .foregroundColor(.blue)
+                    }
+                }
+                
                 ToolbarItem(placement: .navigationBarTrailing) {
                     Button("Закрыть") {
                         dismiss()
                     }
+                    .fontWeight(.semibold)
                 }
             }
         }

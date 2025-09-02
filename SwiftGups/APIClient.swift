@@ -350,21 +350,8 @@ class DVGUPSAPIClient: ObservableObject {
             subject = String(rowContent[subjRange]).trimmingCharacters(in: .whitespacesAndNewlines)
         }
         
-        // Парсим дополнительную информацию (ZOOM, Discord, etc.)
-        let additionalInfoPattern = #"<div>([^<]*(?:ZOOM|Discord|FreeConferenceCall|код доступа|Идентификатор)[^<]*)</div>"#
-        let additionalInfoRegex = try? NSRegularExpression(pattern: additionalInfoPattern, options: [.caseInsensitive])
-        let additionalInfoMatch = additionalInfoRegex?.firstMatch(in: rowContent, range: NSRange(location: 0, length: rowContent.count))
-        
-        var onlineInfo: String? = nil
-        if let additionalInfoMatchResult = additionalInfoMatch,
-           let infoRange = Range(additionalInfoMatchResult.range(at: 1), in: rowContent) {
-            let info = String(rowContent[infoRange])
-                .trimmingCharacters(in: .whitespacesAndNewlines)
-                .replacingOccurrences(of: "\n", with: " ")
-            if !info.isEmpty {
-                onlineInfo = info
-            }
-        }
+        // Парсим онлайн информацию с сокращением ссылок
+        var onlineInfo = extractOnlineInfo(from: rowContent)
         
         // Парсим аудиторию - ищем в td с wrap
         let auditoriumPattern = #"<td[^>]*wrap[^>]*>([^<]*)</td>"#
@@ -380,11 +367,195 @@ class DVGUPSAPIClient: ObservableObject {
             }
         }
         
+        // Парсим группы на паре
+        let groups = extractGroupsFromLesson(from: rowContent)
+        
         // Парсим преподавателя
+        let teacher = extractTeacherInfo(from: rowContent)
+        
+        return Lesson(
+            pairNumber: pairNumber,
+            timeStart: String(timeComponents[0]),
+            timeEnd: String(timeComponents[1]),
+            type: lessonType,
+            subject: subject,
+            room: auditorium,
+            teacher: teacher,
+            groups: groups,
+            onlineLink: onlineInfo
+        )
+    }
+    
+    /// Извлекает и сокращает информацию об онлайн занятиях
+    private func extractOnlineInfo(from rowContent: String) -> String? {
+        // Поиск различных типов онлайн ссылок
+        var onlineInfo: String? = nil
+        
+        // ZOOM ссылки
+        if let zoomInfo = extractZoomInfo(from: rowContent) {
+            onlineInfo = zoomInfo
+        }
+        // Discord ссылки
+        else if let discordInfo = extractDiscordInfo(from: rowContent) {
+            onlineInfo = discordInfo
+        }
+        // FreeConferenceCall ссылки
+        else if let freeConfInfo = extractFreeConferenceCallInfo(from: rowContent) {
+            onlineInfo = freeConfInfo
+        }
+        // Контакты преподавателей или другие ссылки
+        else if let otherInfo = extractOtherOnlineInfo(from: rowContent) {
+            onlineInfo = otherInfo
+        }
+        
+        return onlineInfo
+    }
+    
+    /// Извлекает информацию о ZOOM
+    private func extractZoomInfo(from html: String) -> String? {
+        // Ищем паттерн ZOOM с ID и кодом доступа
+        let zoomPattern1 = #"ZOOM:\s*(\d{3}-\d{3}-\d{4})\s*код доступа:\s*(\w+)"#
+        if let regex = try? NSRegularExpression(pattern: zoomPattern1),
+           let match = regex.firstMatch(in: html, range: NSRange(location: 0, length: html.count)),
+           match.numberOfRanges >= 3 {
+            let nsString = html as NSString
+            let meetingId = nsString.substring(with: match.range(at: 1))
+            let passcode = nsString.substring(with: match.range(at: 2))
+            return "ZOOM: \(meetingId), код: \(passcode)"
+        }
+        
+        // Ищем полный ZOOM URL
+        let zoomPattern2 = #"https://us\d{2}web\.zoom\.us/j/(\d+)\?pwd=([^\s]+)"#
+        if let regex = try? NSRegularExpression(pattern: zoomPattern2),
+           let match = regex.firstMatch(in: html, range: NSRange(location: 0, length: html.count)),
+           match.numberOfRanges >= 2 {
+            let nsString = html as NSString
+            let meetingId = nsString.substring(with: match.range(at: 1))
+            // Ищем код доступа в тексте
+            let passcodePattern = #"Код доступа:\s*(\w+)"#
+            if let passcodeRegex = try? NSRegularExpression(pattern: passcodePattern),
+               let passcodeMatch = passcodeRegex.firstMatch(in: html, range: NSRange(location: 0, length: html.count)) {
+                let passcode = nsString.substring(with: passcodeMatch.range(at: 1))
+                return "ZOOM: \(meetingId), код: \(passcode)"
+            } else {
+                return "ZOOM: \(meetingId)"
+            }
+        }
+        
+        // Общий поиск любой ZOOM информации
+        let generalZoomPattern = #"<div>([^<]*ZOOM[^<]*)</div>"#
+        if let regex = try? NSRegularExpression(pattern: generalZoomPattern, options: [.caseInsensitive]),
+           let match = regex.firstMatch(in: html, range: NSRange(location: 0, length: html.count)) {
+            let nsString = html as NSString
+            let zoomText = nsString.substring(with: match.range(at: 1))
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+                .replacingOccurrences(of: "\n", with: " ")
+            if zoomText.count > 80 {
+                // Если текст слишком длинный, сокращаем
+                return "ZOOM: есть ссылка"
+            }
+            return zoomText.isEmpty ? nil : zoomText
+        }
+        
+        return nil
+    }
+    
+    /// Извлекает информацию о Discord
+    private func extractDiscordInfo(from html: String) -> String? {
+        let discordPattern = #"Discord:\s*https://discord\.gg/(\w+)"#
+        if let regex = try? NSRegularExpression(pattern: discordPattern),
+           let match = regex.firstMatch(in: html, range: NSRange(location: 0, length: html.count)) {
+            let nsString = html as NSString
+            let inviteCode = nsString.substring(with: match.range(at: 1))
+            return "Discord: \(inviteCode)"
+        }
+        
+        // Общий поиск Discord информации
+        let generalDiscordPattern = #"<div>([^<]*Discord[^<]*)</div>"#
+        if let regex = try? NSRegularExpression(pattern: generalDiscordPattern, options: [.caseInsensitive]),
+           let match = regex.firstMatch(in: html, range: NSRange(location: 0, length: html.count)) {
+            let nsString = html as NSString
+            let discordText = nsString.substring(with: match.range(at: 1))
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+                .replacingOccurrences(of: "\n", with: " ")
+            return discordText.isEmpty ? nil : "Discord: есть ссылка"
+        }
+        
+        return nil
+    }
+    
+    /// Извлекает информацию о FreeConferenceCall
+    private func extractFreeConferenceCallInfo(from html: String) -> String? {
+        let freeConfPattern = #"FreeConferenceCall:[^>]*>([^<]+)<"#
+        if let regex = try? NSRegularExpression(pattern: freeConfPattern),
+           let match = regex.firstMatch(in: html, range: NSRange(location: 0, length: html.count)) {
+            let nsString = html as NSString
+            let roomName = nsString.substring(with: match.range(at: 1))
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            return "FreeConference: \(roomName)"
+        }
+        
+        // Общий поиск FreeConferenceCall
+        let generalPattern = #"<div>([^<]*FreeConferenceCall[^<]*)</div>"#
+        if let regex = try? NSRegularExpression(pattern: generalPattern, options: [.caseInsensitive]),
+           let match = regex.firstMatch(in: html, range: NSRange(location: 0, length: html.count)) {
+            return "FreeConference: есть ссылка"
+        }
+        
+        return nil
+    }
+    
+    /// Извлекает другую онлайн информацию
+    private func extractOtherOnlineInfo(from html: String) -> String? {
+        // Контакты преподавателей
+        if html.contains("Контакты преподавателей") {
+            return "См. контакты преподавателей"
+        }
+        
+        // Общий поиск ссылок в div-ах
+        let linkPattern = #"<div><a[^>]*href='([^']+)'[^>]*>([^<]+)</a></div>"#
+        if let regex = try? NSRegularExpression(pattern: linkPattern),
+           let match = regex.firstMatch(in: html, range: NSRange(location: 0, length: html.count)) {
+            let nsString = html as NSString
+            let linkText = nsString.substring(with: match.range(at: 2))
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            return linkText.isEmpty ? "Есть ссылка" : linkText
+        }
+        
+        return nil
+    }
+    
+    /// Извлекает список групп на паре
+    private func extractGroupsFromLesson(from rowContent: String) -> [String] {
+        // Ищем группы в четвертом столбце (col-sm-2 без wrap)
+        let groupsPattern = #"<td class='col-sm-2'\s*>([^<]*)</td>"#
+        let groupsRegex = try? NSRegularExpression(pattern: groupsPattern)
+        let groupsMatches = groupsRegex?.matches(in: rowContent, options: [], range: NSRange(location: 0, length: rowContent.count)) ?? []
+        
+        for match in groupsMatches {
+            if match.numberOfRanges > 1 {
+                let nsString = rowContent as NSString
+                let groupsText = nsString.substring(with: match.range(at: 1))
+                    .trimmingCharacters(in: .whitespacesAndNewlines)
+                
+                // Проверяем, что это действительно группы (содержат характерные сокращения)
+                if !groupsText.isEmpty && (groupsText.contains("БО2") || groupsText.contains("СО2") || groupsText.contains("МО2")) {
+                    // Разделяем группы по запятым и очищаем
+                    return groupsText.components(separatedBy: ", ")
+                        .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+                        .filter { !$0.isEmpty }
+                }
+            }
+        }
+        
+        return []
+    }
+    
+    /// Извлекает информацию о преподавателе
+    private func extractTeacherInfo(from rowContent: String) -> Teacher? {
         let teacherPattern = #"<div>([^<]+?)(?:\s*<a[^>]*href='mailto:([^']+)'[^>]*>&#9993;</a>)?</div>"#
         let teacherRegex = try? NSRegularExpression(pattern: teacherPattern)
         
-        var teacher: Teacher? = nil
         let teacherMatches = teacherRegex?.matches(in: rowContent, options: [], range: NSRange(location: 0, length: rowContent.count)) ?? []
         
         // Берем последний матч - обычно это преподаватель
@@ -396,7 +567,11 @@ class DVGUPSAPIClient: ObservableObject {
             if !teacherName.isEmpty && 
                teacherName != " " && 
                !teacherName.contains("wrap") &&
-               !teacherName.contains("БО2") { // исключаем названия групп
+               !teacherName.contains("БО2") && // исключаем названия групп
+               !teacherName.contains("СО2") &&
+               !teacherName.contains("МО2") &&
+               !teacherName.contains("а. ") && // исключаем аудитории
+               !teacherName.contains("Спортивный") { // исключаем места проведения
                 
                 var teacherEmail: String? = nil
                 if lastTeacherMatch.numberOfRanges > 2,
@@ -407,21 +582,11 @@ class DVGUPSAPIClient: ObservableObject {
                     }
                 }
                 
-                teacher = Teacher(name: teacherName, email: teacherEmail)
+                return Teacher(name: teacherName, email: teacherEmail)
             }
         }
         
-        return Lesson(
-            pairNumber: pairNumber,
-            timeStart: String(timeComponents[0]),
-            timeEnd: String(timeComponents[1]),
-            type: lessonType,
-            subject: subject,
-            room: auditorium,
-            teacher: teacher,
-            groups: [],
-            onlineLink: onlineInfo
-        )
+        return nil
     }
     
     // Оригинальная функция как fallback

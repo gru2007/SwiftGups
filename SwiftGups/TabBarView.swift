@@ -12,6 +12,7 @@ enum AppTab: String, CaseIterable, Hashable {
     case schedule = "schedule"
     case homework = "homework"
     case news = "news"
+    case connect = "connect"
     case profile = "profile"
     
     var title: String {
@@ -19,6 +20,7 @@ enum AppTab: String, CaseIterable, Hashable {
         case .schedule: return "Расписание"
         case .homework: return "Домашние задания"
         case .news: return "Новости"
+        case .connect: return "Connect"
         case .profile: return "Профиль"
         }
     }
@@ -28,6 +30,7 @@ enum AppTab: String, CaseIterable, Hashable {
         case .schedule: return "calendar"
         case .homework: return "book.closed"
         case .news: return "newspaper"
+        case .connect: return "link.circle"
         case .profile: return "person.crop.circle"
         }
     }
@@ -37,6 +40,7 @@ enum AppTab: String, CaseIterable, Hashable {
         case .schedule: return .blue
         case .homework: return .green
         case .news: return .orange
+        case .connect: return .cyan
         case .profile: return .purple
         }
     }
@@ -109,13 +113,19 @@ struct TabBarView: View {
                     HomeworkTab(currentUser: currentUser, isInSplitView: false)
                         .tabItem {
                             Image(systemName: "book.closed")
-                            Text("Домашние задания")
+                            Text("Домашка")
                         }
                     
                     NewsTab(isInSplitView: false)
                         .tabItem {
                             Image(systemName: "newspaper")
                             Text("Новости")
+                        }
+                    
+                    ConnectTab(currentUser: currentUser, isInSplitView: false)
+                        .tabItem {
+                            Image(systemName: "link.circle")
+                            Text("Connect")
                         }
                     
                     ProfileTab(currentUser: currentUser, isInSplitView: false)
@@ -138,6 +148,8 @@ struct TabBarView: View {
             HomeworkTab(currentUser: currentUser, isInSplitView: true)
         case .news:
             NewsTab(isInSplitView: true)
+        case .connect:
+            ConnectTab(currentUser: currentUser, isInSplitView: true)
         case .profile:
             ProfileTab(currentUser: currentUser, isInSplitView: true)
         }
