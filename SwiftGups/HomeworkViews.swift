@@ -118,6 +118,15 @@ struct AddHomeworkSheet: View {
         do {
             try modelContext.save()
             persistSubjectPreset()
+            
+            // Автоматически синхронизируем изображения с iCloud
+            if !selectedImages.isEmpty {
+                Task {
+                    let imageService = CloudKitImageService()
+                    await imageService.syncHomeworkImages(homework, context: modelContext)
+                }
+            }
+            
             dismiss()
         } catch {
             print("Error saving homework: \(error)")
@@ -268,6 +277,7 @@ struct HomeworkCard: View {
     let homework: Homework
     let toggleAction: () -> Void
     @State private var showingPhotos = false
+    @State private var selectedImageAttachment: HomeworkImageAttachment?
     
     private var isOverdue: Bool {
         !homework.isCompleted && homework.dueDate < Date()
@@ -324,10 +334,13 @@ struct HomeworkCard: View {
             }
             
             // Миниатюры фотографий (если есть)
-            if !homework.imageAttachments.isEmpty {
-                HomeworkImageThumbnails(
-                    attachments: homework.imageAttachments,
-                    onShowPhotos: { showingPhotos = true }
+            if !homework.allImageAttachments.isEmpty {
+                EnhancedHomeworkImageThumbnails(
+                    attachments: homework.allImageAttachments,
+                    onShowPhotos: { showingPhotos = true },
+                    onImageTap: { attachment in
+                        selectedImageAttachment = attachment
+                    }
                 )
             }
             
@@ -344,7 +357,7 @@ struct HomeworkCard: View {
                 }
                 
                 // Иконка фотографий (если есть)
-                if !homework.imageAttachments.isEmpty {
+                if !homework.allImageAttachments.isEmpty {
                     Button {
                         showingPhotos = true
                     } label: {
@@ -353,7 +366,7 @@ struct HomeworkCard: View {
                                 .font(.caption)
                                 .foregroundColor(.blue)
                             
-                            Text("\(homework.imageAttachments.count)")
+                            Text("\(homework.allImageAttachments.count)")
                                 .font(.caption)
                                 .foregroundColor(.blue)
                         }
@@ -387,6 +400,14 @@ struct HomeworkCard: View {
         )
         .sheet(isPresented: $showingPhotos) {
             HomeworkPhotosSheet(homework: homework)
+        }
+        .sheet(isPresented: Binding(
+            get: { selectedImageAttachment != nil },
+            set: { _ in selectedImageAttachment = nil }
+        )) {
+            if let attachment = selectedImageAttachment {
+                EnhancedImageViewerSheet(imageAttachment: attachment)
+            }
         }
     }
 }
@@ -441,10 +462,124 @@ struct HomeworkImageThumbnails: View {
     }
 }
 
+struct EnhancedHomeworkImageThumbnails: View {
+    let attachments: [HomeworkImageAttachment]
+    let onShowPhotos: () -> Void
+    let onImageTap: ((HomeworkImageAttachment) -> Void)?
+    @StateObject private var attachmentManager = AttachmentManager.shared
+    
+    var body: some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 8) {
+                ForEach(attachments.prefix(3), id: \.id) { attachment in
+                    Button(action: {
+                        if let onImageTap = onImageTap {
+                            onImageTap(attachment)
+                        } else {
+                            onShowPhotos()
+                        }
+                    }) {
+                        EnhancedImageThumbnail(attachment: attachment)
+                    }
+                }
+                
+                // Показать "+X" если фотографий больше 3
+                if attachments.count > 3 {
+                    Button(action: onShowPhotos) {
+                        Rectangle()
+                            .fill(Color.blue.opacity(0.1))
+                            .frame(width: 60, height: 40)
+                            .cornerRadius(8)
+                            .overlay(
+                                Text("+\(attachments.count - 3)")
+                                    .font(.caption)
+                                    .fontWeight(.semibold)
+                                    .foregroundColor(.blue)
+                            )
+                    }
+                }
+            }
+            .padding(.horizontal, 2)
+        }
+    }
+}
+
+struct EnhancedImageThumbnail: View {
+    let attachment: HomeworkImageAttachment
+    @StateObject private var attachmentManager = AttachmentManager.shared
+    @State private var image: UIImage?
+    @State private var isLoading = false
+    
+    var body: some View {
+        ZStack {
+            if let image = image {
+                Image(uiImage: image)
+                    .resizable()
+                    .aspectRatio(contentMode: .fill)
+                    .frame(width: 60, height: 40)
+                    .clipped()
+                    .cornerRadius(8)
+            } else {
+                Rectangle()
+                    .fill(Color.gray.opacity(0.3))
+                    .frame(width: 60, height: 40)
+                    .cornerRadius(8)
+                    .overlay {
+                        if isLoading {
+                            ProgressView()
+                                .scaleEffect(0.6)
+                        } else {
+                            Image(systemName: "photo")
+                                .foregroundColor(.gray)
+                        }
+                    }
+            }
+            
+            // Индикатор синхронизации
+            if attachment.type == .cloud, let cloudAttachment = attachment.cloudAttachment {
+                VStack {
+                    HStack {
+                        Spacer()
+                        Circle()
+                            .fill(syncStatusColor(cloudAttachment.syncStatus))
+                            .frame(width: 8, height: 8)
+                    }
+                    Spacer()
+                }
+                .padding(4)
+            }
+        }
+        .task {
+            await loadImage()
+        }
+    }
+    
+    private func loadImage() async {
+        isLoading = true
+        do {
+            self.image = try await attachmentManager.loadImage(from: attachment)
+        } catch {
+            print("Failed to load image: \(error)")
+        }
+        isLoading = false
+    }
+    
+    private func syncStatusColor(_ status: AttachmentSyncStatus) -> Color {
+        switch status {
+        case .pending: return .orange
+        case .uploading: return .blue
+        case .downloading: return .cyan
+        case .synced: return .green
+        case .error: return .red
+        }
+    }
+}
+
 struct HomeworkPhotosSheet: View {
     let homework: Homework
     @Environment(\.dismiss) private var dismiss
     @State private var selectedImageURL: URL?
+    @State private var selectedImageAttachment: HomeworkImageAttachment?
     @State private var showingExportSheet = false
     
     private let columns = [
@@ -457,29 +592,13 @@ struct HomeworkPhotosSheet: View {
         NavigationView {
             ScrollView {
                 LazyVGrid(columns: columns, spacing: 12) {
-                    ForEach(homework.imageAttachments, id: \.self) { attachment in
-                        Button {
-                            selectedImageURL = AttachmentManager.shared.getFileURL(attachment)
-                        } label: {
-                            if let image = AttachmentManager.shared.loadImage(attachment) {
-                                Image(uiImage: image)
-                                    .resizable()
-                                    .aspectRatio(contentMode: .fill)
-                                    .frame(width: 120, height: 120)
-                                    .clipped()
-                                    .cornerRadius(12)
-                            } else {
-                                Rectangle()
-                                    .fill(Color.gray.opacity(0.3))
-                                    .frame(width: 120, height: 120)
-                                    .cornerRadius(12)
-                                    .overlay(
-                                        Image(systemName: "photo")
-                                            .font(.title2)
-                                            .foregroundColor(.gray)
-                                    )
+                    ForEach(homework.allImageAttachments, id: \.id) { attachment in
+                        EnhancedHomeworkImageGridItem(
+                            attachment: attachment,
+                            onTap: {
+                                selectedImageAttachment = attachment
                             }
-                        }
+                        )
                     }
                 }
                 .padding()
@@ -517,8 +636,180 @@ struct HomeworkPhotosSheet: View {
         )) { identifiableURL in
             ImageViewerSheet(imageURL: identifiableURL.url)
         }
+        .sheet(isPresented: Binding(
+            get: { selectedImageAttachment != nil },
+            set: { _ in selectedImageAttachment = nil }
+        )) {
+            if let attachment = selectedImageAttachment {
+                EnhancedImageViewerSheet(imageAttachment: attachment)
+            }
+        }
         .sheet(isPresented: $showingExportSheet) {
-            PhotoExportSheet(imageAttachments: homework.imageAttachments)
+            EnhancedPhotoExportSheet(imageAttachments: homework.allImageAttachments)
+        }
+    }
+}
+
+struct EnhancedHomeworkImageGridItem: View {
+    let attachment: HomeworkImageAttachment
+    let onTap: () -> Void
+    @StateObject private var attachmentManager = AttachmentManager.shared
+    @State private var image: UIImage?
+    @State private var isLoading = false
+    
+    var body: some View {
+        Button(action: onTap) {
+            ZStack {
+                if let image = image {
+                    Image(uiImage: image)
+                        .resizable()
+                        .aspectRatio(contentMode: .fill)
+                        .frame(width: 120, height: 120)
+                        .clipped()
+                        .cornerRadius(12)
+                } else {
+                    Rectangle()
+                        .fill(Color.gray.opacity(0.3))
+                        .frame(width: 120, height: 120)
+                        .cornerRadius(12)
+                        .overlay {
+                            if isLoading {
+                                ProgressView()
+                            } else {
+                                Image(systemName: "photo")
+                                    .font(.title2)
+                                    .foregroundColor(.gray)
+                            }
+                        }
+                }
+                
+                // Индикатор синхронизации
+                if attachment.type == .cloud, let cloudAttachment = attachment.cloudAttachment {
+                    VStack {
+                        HStack {
+                            Spacer()
+                            HStack(spacing: 4) {
+                                Circle()
+                                    .fill(syncStatusColor(cloudAttachment.syncStatus))
+                                    .frame(width: 8, height: 8)
+                                
+                                if cloudAttachment.syncStatus == .uploading {
+                                    ProgressView()
+                                        .scaleEffect(0.6)
+                                }
+                            }
+                            .padding(6)
+                            .background(Color.black.opacity(0.5))
+                            .cornerRadius(12)
+                        }
+                        Spacer()
+                    }
+                    .padding(8)
+                }
+            }
+        }
+        .task {
+            await loadImage()
+        }
+    }
+    
+    private func loadImage() async {
+        isLoading = true
+        do {
+            self.image = try await attachmentManager.loadImage(from: attachment)
+        } catch {
+            print("Failed to load image: \(error)")
+        }
+        isLoading = false
+    }
+    
+    private func syncStatusColor(_ status: AttachmentSyncStatus) -> Color {
+        switch status {
+        case .pending: return .orange
+        case .uploading: return .blue
+        case .downloading: return .cyan
+        case .synced: return .green
+        case .error: return .red
+        }
+    }
+}
+
+struct EnhancedPhotoExportSheet: View {
+    let imageAttachments: [HomeworkImageAttachment]
+    @Environment(\.dismiss) private var dismiss
+    @State private var showingShareSheet = false
+    @StateObject private var attachmentManager = AttachmentManager.shared
+    
+    var body: some View {
+        NavigationView {
+            VStack(spacing: 20) {
+                Text("Экспорт фотографий")
+                    .font(.title2)
+                    .fontWeight(.semibold)
+                
+                Text("Выберите, куда экспортировать \(imageAttachments.count) фотографий:")
+                    .font(.body)
+                    .foregroundColor(.secondary)
+                    .multilineTextAlignment(.center)
+                
+                VStack(spacing: 16) {
+                    Button {
+                        Task { await exportToPhotos() }
+                    } label: {
+                        ExportOption(
+                            title: "Сохранить в галерею",
+                            subtitle: "Добавить фото в приложение \"Фото\"",
+                            icon: "photo.on.rectangle.angled",
+                            color: .blue
+                        )
+                    }
+                    .buttonStyle(PlainButtonStyle())
+                    
+                    Button {
+                        showingShareSheet = true
+                    } label: {
+                        ExportOption(
+                            title: "Поделиться",
+                            subtitle: "Отправить в другие приложения",
+                            icon: "square.and.arrow.up",
+                            color: .green
+                        )
+                    }
+                    .buttonStyle(PlainButtonStyle())
+                }
+                .padding(.horizontal)
+                
+                Spacer()
+            }
+            .padding()
+            .navigationTitle("Экспорт")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .navigationBarTrailing) {
+                    Button("Отмена") {
+                        dismiss()
+                    }
+                }
+            }
+        }
+        .sheet(isPresented: $showingShareSheet) {
+            EnhancedShareSheet(imageAttachments: imageAttachments)
+        }
+    }
+    
+    private func exportToPhotos() async {
+        for attachment in imageAttachments {
+            do {
+                if let image = try await attachmentManager.loadImage(from: attachment) {
+                    UIImageWriteToSavedPhotosAlbum(image, nil, nil, nil)
+                }
+            } catch {
+                print("Failed to load image for export: \(error)")
+            }
+        }
+        
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+            dismiss()
         }
     }
 }
@@ -655,6 +946,55 @@ struct ShareSheet: UIViewControllerRepresentable {
     
     func updateUIViewController(_ uiViewController: UIActivityViewController, context: Context) {
         // No updates needed
+    }
+}
+
+struct EnhancedShareSheet: UIViewControllerRepresentable {
+    let imageAttachments: [HomeworkImageAttachment]
+    @StateObject private var attachmentManager = AttachmentManager.shared
+    
+    func makeUIViewController(context: Context) -> UIActivityViewController {
+        // Загружаем изображения синхронно для UIActivityViewController
+        let images = loadImagesSync()
+        let controller = UIActivityViewController(activityItems: images, applicationActivities: nil)
+        
+        // Настройка для iPad
+        if let popover = controller.popoverPresentationController {
+            if let windowScene = UIApplication.shared.connectedScenes.first as? UIWindowScene,
+               let window = windowScene.windows.first {
+                popover.sourceView = window
+                popover.sourceRect = CGRect(x: window.bounds.midX, y: window.bounds.midY, width: 0, height: 0)
+                popover.permittedArrowDirections = []
+            }
+        }
+        
+        return controller
+    }
+    
+    func updateUIViewController(_ uiViewController: UIActivityViewController, context: Context) {
+        // No updates needed
+    }
+    
+    private func loadImagesSync() -> [UIImage] {
+        var images: [UIImage] = []
+        
+        for attachment in imageAttachments {
+            switch attachment.type {
+            case .local:
+                if let path = attachment.localPath,
+                   let image = AttachmentManager.shared.loadImage(path) {
+                    images.append(image)
+                }
+            case .cloud:
+                if let cloudAttachment = attachment.cloudAttachment,
+                   let cachedPath = cloudAttachment.localCachedPath,
+                   let image = AttachmentManager.shared.loadImage(cachedPath) {
+                    images.append(image)
+                }
+            }
+        }
+        
+        return images
     }
 }
 
