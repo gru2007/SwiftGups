@@ -18,7 +18,6 @@ struct MainAppView: View {
             if let currentUser = users.first {
                 TabBarView(currentUser: currentUser)
                     .environmentObject(cloudKitService)
-                    .changelogSheet()
             } else {
                 // Регистрация всегда в полноэкранном режиме (не внутри NavigationSplitView)
                 RegistrationView()
@@ -592,5 +591,5 @@ struct ErrorBanner: View {
 
 #Preview {
     MainAppView()
-        .modelContainer(for: [User.self, Homework.self, HomeworkAttachment.self], inMemory: true)
+        .modelContainer(for: [User.self, Homework.self], inMemory: true)
 }

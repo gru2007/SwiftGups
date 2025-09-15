@@ -19,7 +19,7 @@ struct SwiftGupsApp: App {
     }
     
     private func createModelContainer() -> ModelContainer {
-        let schema = Schema([User.self, Homework.self, HomeworkAttachment.self])
+        let schema = Schema([User.self, Homework.self])
         
         let modelConfiguration = ModelConfiguration(
             "SwiftGupsModel",

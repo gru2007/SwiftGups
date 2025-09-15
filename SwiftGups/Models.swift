@@ -268,9 +268,7 @@ class Homework {
     var isCompleted: Bool = false
     var createdAt: Date = Date()
     var priority: HomeworkPriority = HomeworkPriority.medium
-    var attachments: [String] = [] // Локальные пути к файлам
-    var cloudAttachments: [HomeworkAttachment]? = [] // CloudKit-синхронизируемые вложения (optional для CloudKit)
-    var lastImageSync: Date = Date() // Для отслеживания синхронизации изображений
+    var attachments: [String] = [] // Пути к файлам или ссылки
     
     init(title: String, subject: String, description: String, dueDate: Date, priority: HomeworkPriority = .medium) {
         self.id = UUID()
@@ -282,8 +280,6 @@ class Homework {
         self.createdAt = Date()
         self.priority = priority
         self.attachments = []
-        self.cloudAttachments = []
-        self.lastImageSync = Date()
     }
     
     func toggle() {
@@ -298,52 +294,6 @@ class Homework {
         attachments.removeAll { $0 == attachment }
     }
     
-    func addCloudAttachment(_ attachment: HomeworkAttachment) {
-        if cloudAttachments == nil {
-            cloudAttachments = []
-        }
-        cloudAttachments?.append(attachment)
-        attachment.homework = self // Устанавливаем inverse relationship
-        lastImageSync = Date()
-    }
-    
-    func removeCloudAttachment(_ attachmentId: String) {
-        cloudAttachments?.removeAll { $0.id == attachmentId }
-        lastImageSync = Date()
-    }
-    
-    /// Все изображения (локальные + облачные)
-    var allImageAttachments: [HomeworkImageAttachment] {
-        var images: [HomeworkImageAttachment] = []
-        
-        // Локальные изображения
-        for attachment in imageAttachments {
-            images.append(HomeworkImageAttachment(
-                id: attachment,
-                type: .local,
-                localPath: attachment,
-                cloudAttachment: nil
-            ))
-        }
-        
-        // Облачные изображения
-        if let cloudAttachments = cloudAttachments {
-            for cloudAttachment in cloudAttachments {
-                if cloudAttachment.type == .image {
-                    images.append(HomeworkImageAttachment(
-                        id: cloudAttachment.id,
-                        type: .cloud,
-                        localPath: cloudAttachment.localCachedPath,
-                        cloudAttachment: cloudAttachment
-                    ))
-                }
-            }
-        }
-        
-        return images
-    }
-    
-    /// Только локальные изображения (для обратной совместимости)
     var imageAttachments: [String] {
         return attachments.filter { attachment in
             let lowercased = attachment.lowercased()
@@ -354,111 +304,6 @@ class Homework {
                    lowercased.hasSuffix(".heif")
         }
     }
-}
-
-/// Типы вложений для CloudKit синхронизации  
-enum AttachmentType: String, Codable, CaseIterable {
-    case image = "image"
-    case document = "document"
-    case other = "other"
-}
-
-/// Вложение домашнего задания для CloudKit синхронизации
-@Model 
-class HomeworkAttachment {
-    var id: String = ""
-    var homeworkId: String = ""
-    var type: AttachmentType = AttachmentType.image
-    var filename: String = ""
-    var originalFilename: String = ""
-    var fileSize: Int = 0
-    var mimeType: String = ""
-    var localCachedPath: String? = nil
-    var cloudAssetURL: String? = nil // URL CloudKit Asset
-    var uploadedAt: Date = Date()
-    var lastSync: Date = Date()
-    var isUploaded: Bool = false
-    var isDownloaded: Bool = false
-    var syncStatus: AttachmentSyncStatus = AttachmentSyncStatus.pending
-    
-    // CloudKit требует inverse relationship
-    var homework: Homework? = nil
-    
-    init(id: String = UUID().uuidString, 
-         homeworkId: String, 
-         type: AttachmentType = .image,
-         filename: String,
-         originalFilename: String = "",
-         fileSize: Int = 0,
-         mimeType: String = "") {
-        self.id = id
-        self.homeworkId = homeworkId
-        self.type = type
-        self.filename = filename
-        self.originalFilename = originalFilename.isEmpty ? filename : originalFilename
-        self.fileSize = fileSize
-        self.mimeType = mimeType
-        self.uploadedAt = Date()
-        self.lastSync = Date()
-        self.isUploaded = false
-        self.isDownloaded = false
-        self.syncStatus = .pending
-    }
-    
-    /// Помечает вложение как загруженное в CloudKit
-    func markAsUploaded(cloudAssetURL: String) {
-        self.cloudAssetURL = cloudAssetURL
-        self.isUploaded = true
-        self.syncStatus = .synced
-        self.lastSync = Date()
-    }
-    
-    /// Помечает вложение как загруженное локально
-    func markAsDownloaded(localPath: String) {
-        self.localCachedPath = localPath
-        self.isDownloaded = true
-        self.lastSync = Date()
-    }
-    
-    /// Помечает вложение как требующее синхронизации
-    func markForSync() {
-        self.syncStatus = .pending
-        self.lastSync = Date()
-    }
-}
-
-/// Статус синхронизации вложения
-enum AttachmentSyncStatus: String, Codable, CaseIterable {
-    case pending = "pending"         // Ожидает синхронизации
-    case uploading = "uploading"     // Загружается в CloudKit
-    case downloading = "downloading" // Загружается из CloudKit
-    case synced = "synced"          // Синхронизировано
-    case error = "error"            // Ошибка синхронизации
-}
-
-/// Объединенное представление изображения (локального или облачного)
-struct HomeworkImageAttachment: Identifiable {
-    let id: String
-    let type: HomeworkImageType
-    let localPath: String?
-    let cloudAttachment: HomeworkAttachment?
-    
-    var displayName: String {
-        cloudAttachment?.originalFilename ?? localPath ?? "Изображение"
-    }
-    
-    var syncStatus: AttachmentSyncStatus {
-        cloudAttachment?.syncStatus ?? .synced
-    }
-    
-    var isCloudSynced: Bool {
-        type == .cloud && cloudAttachment?.isUploaded == true
-    }
-}
-
-enum HomeworkImageType {
-    case local
-    case cloud
 }
 
 /// Приоритет домашнего задания
