@@ -880,19 +880,9 @@ struct EditHomeworkSheet: View {
                     }
                     
                     // Отображение существующих фотографий
-                    if !homework.allImageAttachments.isEmpty {
-                        AttachmentsView(homework: homework) { attachment in
-                            // Удаляем локальные или облачные вложения
-                            switch attachment.type {
-                            case .local:
-                                if let path = attachment.localPath {
-                                    homework.removeAttachment(path)
-                                }
-                            case .cloud:
-                                if let cloudAttachment = attachment.cloudAttachment {
-                                    homework.removeCloudAttachment(cloudAttachment.id)
-                                }
-                            }
+                    if !homework.imageAttachments.isEmpty {
+                        LegacyAttachmentsView(attachments: homework.imageAttachments) { attachment in
+                            homework.removeAttachment(attachment)
                         }
                     }
                 }
@@ -916,7 +906,7 @@ struct EditHomeworkSheet: View {
             }
         }
         .sheet(isPresented: $showingPhotoSelection) {
-            EnhancedPhotoSelectionSheet(homework: homework, showingSheet: $showingPhotoSelection)
+            PhotoSelectionSheet(showingSheet: $showingPhotoSelection, selectedImages: $selectedImages)
         }
         .onChange(of: selectedImages) { newImages in
             // Новые изображения будут сохранены при нажатии "Сохранить"
