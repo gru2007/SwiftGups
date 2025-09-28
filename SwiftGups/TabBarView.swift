@@ -107,7 +107,7 @@ struct TabBarView: View {
                     ScheduleTab(currentUser: currentUser, isInSplitView: false)
                         .tabItem {
                             Image(systemName: "calendar")
-                            Text("Расписание")
+                            Text("Пары")
                         }
                     
                     HomeworkTab(currentUser: currentUser, isInSplitView: false)
@@ -120,12 +120,6 @@ struct TabBarView: View {
                         .tabItem {
                             Image(systemName: "newspaper")
                             Text("Новости")
-                        }
-                    
-                    ConnectTab(currentUser: currentUser, isInSplitView: false)
-                        .tabItem {
-                            Image(systemName: "link.circle")
-                            Text("Connect")
                         }
                     
                     ProfileTab(currentUser: currentUser, isInSplitView: false)
@@ -420,6 +414,7 @@ struct HomeworkTab: View {
     @State private var selectedFilter: HomeworkFilter = .all
     @State private var selectedSubject: String = "Все предметы"
     @State private var homeworkToEdit: Homework? = nil
+    @AppStorage("homeworkDeprecationDismissed") private var homeworkDeprecationDismissed: Bool = false
     
     // Все уникальные предметы для фильтрации
     private var availableSubjects: [String] {
@@ -464,6 +459,14 @@ struct HomeworkTab: View {
             if isInSplitView {
                 // iPad layout - без NavigationView
                 VStack(spacing: 0) {
+                    // Депрекейшн баннер
+                    if !homeworkDeprecationDismissed {
+                        HomeworkDeprecationBanner {
+                            homeworkDeprecationDismissed = true
+                        }
+                        .padding([.top, .horizontal])
+                    }
+                    
                     // Фильтры
                     VStack(spacing: 12) {
                         HomeworkFilterBar(selectedFilter: $selectedFilter)
@@ -578,6 +581,14 @@ struct HomeworkTab: View {
                 // iPhone layout - с NavigationView
                 NavigationView {
                     VStack(spacing: 0) {
+                        // Депрекейшн баннер
+                        if !homeworkDeprecationDismissed {
+                            HomeworkDeprecationBanner {
+                                homeworkDeprecationDismissed = true
+                            }
+                            .padding([.top, .horizontal])
+                        }
+                        
                         // Фильтры
                         VStack(spacing: 12) {
                             HomeworkFilterBar(selectedFilter: $selectedFilter)
@@ -931,6 +942,78 @@ struct HomeworkCard: View {
         .sheet(isPresented: $showingPhotos) {
             HomeworkPhotosSheet(homework: homework)
         }
+    }
+}
+
+// MARK: - Homework Deprecation Banner
+
+struct HomeworkDeprecationBanner: View {
+    @Environment(\.openURL) private var openURL
+    let dismissAction: () -> Void
+    
+    init(dismissAction: @escaping () -> Void) {
+        self.dismissAction = dismissAction
+    }
+    
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(alignment: .top, spacing: 10) {
+                Image(systemName: "exclamationmark.circle.fill")
+                    .foregroundColor(.orange)
+                    .font(.title3)
+                
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("Функция скоро будет обновлена")
+                        .font(.subheadline)
+                        .fontWeight(.semibold)
+                        .foregroundColor(.primary)
+                    
+                    Text("Совместно со студсоветом ведём разработку улучшенной кроссплатформенной версии (iOS/Android). Если вы активно используете «Домашние задания», дайте знать в Telegram.")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                    
+                    HStack(spacing: 12) {
+                        Button {
+                            if let url = URL(string: "https://artemevkhv.t.me") {
+                                openURL(url)
+                            }
+                        } label: {
+                            HStack(spacing: 6) {
+                                Image(systemName: "paperplane.fill")
+                                Text("Написать в Telegram")
+                            }
+                            .font(.caption)
+                            .fontWeight(.semibold)
+                            .padding(.horizontal, 10)
+                            .padding(.vertical, 6)
+                            .background(Color.blue.opacity(0.15))
+                            .foregroundColor(.blue)
+                            .cornerRadius(8)
+                        }
+                        
+                        Button("Скрыть") {
+                            dismissAction()
+                        }
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                    }
+                }
+                
+                Spacer()
+            }
+        }
+        .padding(12)
+        .background(
+            RoundedRectangle(cornerRadius: 12)
+                .fill(Color.yellow.opacity(0.12))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 12)
+                        .stroke(Color.orange.opacity(0.25), lineWidth: 1)
+                )
+        )
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("Предупреждение о грядущем обновлении функции Домашние задания")
     }
 }
 
