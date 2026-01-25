@@ -7,6 +7,7 @@
 
 import SwiftUI
 import SwiftData
+import Combine
 
 enum AppTab: String, CaseIterable, Hashable {
     case schedule = "schedule"
@@ -146,6 +147,8 @@ struct ScheduleTab: View {
     @StateObject private var scheduleService = ScheduleService()
     @StateObject private var appNewsService = AppNewsService()
     @State private var showingLessonTimes = false
+    @EnvironmentObject private var liveActivityManager: LiveActivityManager
+    @AppStorage(LiveActivitySettings.enabledKey) private var liveActivityEnabled: Bool = false
 
     // Проверяем, указал ли пользователь группу
     private var hasGroup: Bool { !currentUser.groupId.isEmpty }
@@ -232,6 +235,15 @@ struct ScheduleTab: View {
             Task { @MainActor in
                 await setupScheduleForUser()
             }
+            
+            // Обновляем входные данные для Live Activity (группа известна сразу).
+            liveActivityManager.updateGroup(groupId: currentUser.groupId, groupName: currentUser.groupName)
+        }
+        .onReceive(scheduleService.$currentSchedule) { schedule in
+            liveActivityManager.updateSchedule(schedule)
+        }
+        .onChange(of: liveActivityEnabled) { enabled in
+            liveActivityManager.setEnabled(enabled)
         }
     }
     
@@ -1803,6 +1815,8 @@ struct ProfileTab: View {
     let isInSplitView: Bool
     @Environment(\.modelContext) private var modelContext
     @EnvironmentObject var cloudKitService: CloudKitService
+    @EnvironmentObject private var liveActivityManager: LiveActivityManager
+    @AppStorage(LiveActivitySettings.enabledKey) private var liveActivityEnabled: Bool = false
     @State private var showingEditProfile = false
     @State private var showingDeleteConfirmation = false
     @State private var showingLessonTimes = false
@@ -1829,6 +1843,9 @@ struct ProfileTab: View {
                                 icon: "person.crop.circle",
                                 action: { showingEditProfile = true }
                             )
+                            
+                            LiveActivityToggleCard(isOn: $liveActivityEnabled)
+                                .environmentObject(liveActivityManager)
                             
                             ProfileMenuItem(
                                 title: "Расписание звонков",
@@ -1879,6 +1896,9 @@ struct ProfileTab: View {
                                     icon: "person.crop.circle",
                                     action: { showingEditProfile = true }
                                 )
+                                
+                                LiveActivityToggleCard(isOn: $liveActivityEnabled)
+                                    .environmentObject(liveActivityManager)
                                 
                                 ProfileMenuItem(
                                     title: "Расписание звонков",
@@ -1939,6 +1959,53 @@ struct ProfileTab: View {
     private func resetUserData() {
         modelContext.delete(currentUser)
         try? modelContext.save()
+    }
+}
+
+// MARK: - Live Activity Toggle Card
+
+struct LiveActivityToggleCard: View {
+    @EnvironmentObject private var liveActivityManager: LiveActivityManager
+    @Binding var isOn: Bool
+    
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(spacing: 12) {
+                Image(systemName: "rectangle.stack.badge.person.crop")
+                    .font(.title3)
+                    .foregroundColor(.blue)
+                    .frame(width: 24)
+                
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Live Activity: текущая пара")
+                        .font(.body)
+                        .foregroundColor(.primary)
+                    
+                    Text("Lock Screen / Dynamic Island")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                }
+                
+                Spacer()
+                
+                if #available(iOS 16.1, *) {
+                    Toggle("", isOn: $isOn)
+                        .labelsHidden()
+                } else {
+                    Text("iOS 16.1+")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                }
+            }
+        }
+        .padding()
+        .background(
+            RoundedRectangle(cornerRadius: 12)
+                .fill(Color(.systemGray6))
+        )
+        .onChange(of: isOn) { enabled in
+            liveActivityManager.setEnabled(enabled)
+        }
     }
 }
 

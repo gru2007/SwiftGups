@@ -1,0 +1,170 @@
+import Foundation
+
+#if canImport(ActivityKit)
+import ActivityKit
+#endif
+
+@MainActor
+final class LiveActivityManager: ObservableObject {
+    private var refreshTask: Task<Void, Never>?
+    
+    private var cachedSchedule: Schedule?
+    private var cachedGroupId: String?
+    private var cachedGroupName: String?
+    
+    var isEnabled: Bool {
+        UserDefaults.standard.bool(forKey: LiveActivitySettings.enabledKey)
+    }
+    
+    func setEnabled(_ enabled: Bool) {
+        UserDefaults.standard.set(enabled, forKey: LiveActivitySettings.enabledKey)
+        
+        if enabled {
+            refreshNow()
+        } else {
+            stopAll()
+        }
+    }
+    
+    func updateSchedule(_ schedule: Schedule?) {
+        cachedSchedule = schedule
+        if schedule == nil {
+            stopAll()
+        } else {
+            refreshNow()
+        }
+    }
+    
+    func updateGroup(groupId: String?, groupName: String?) {
+        cachedGroupId = groupId
+        cachedGroupName = groupName
+        if (groupId ?? "").isEmpty || (groupName ?? "").isEmpty {
+            stopAll()
+        } else {
+            refreshNow()
+        }
+    }
+    
+    func refreshNow(date: Date = Date()) {
+        guard isEnabled else {
+            stopAll()
+            return
+        }
+        
+        guard let schedule = cachedSchedule,
+              let groupId = cachedGroupId, !groupId.isEmpty,
+              let groupName = cachedGroupName, !groupName.isEmpty else {
+            return
+        }
+        
+        guard let ctx = schedule.currentOrNextLessonContext(at: date) else {
+            stopAll()
+            return
+        }
+        
+        refreshTask?.cancel()
+        refreshTask = Task { [weak self] in
+            guard let self else { return }
+            await self.upsertActivity(for: ctx, groupId: groupId, groupName: groupName)
+            await self.scheduleNextRefresh(for: ctx, now: date)
+        }
+    }
+    
+    func stopAll() {
+        refreshTask?.cancel()
+        refreshTask = nil
+        
+#if canImport(ActivityKit)
+        if #available(iOS 16.1, *) {
+            Task {
+                for activity in Activity<CurrentLessonActivityAttributes>.activities {
+                    await activity.end(nil, dismissalPolicy: .immediate)
+                }
+            }
+        }
+#endif
+    }
+    
+    private func scheduleNextRefresh(for ctx: ScheduleLessonContext, now: Date) async {
+        // Когда обновляться:
+        // - если сейчас идёт пара -> в её конец (чтобы переключиться на следующую/завершить)
+        // - если показываем “следующую” -> в её начало (чтобы переключиться в “current”)
+        let nextDate: Date
+        switch ctx.kind {
+        case .current:
+            nextDate = ctx.endDate
+        case .next:
+            nextDate = ctx.startDate
+        }
+        
+        // Небольшой буфер, чтобы гарантированно “перешли” границу.
+        let fireAt = nextDate.addingTimeInterval(1)
+        let delay = max(1, fireAt.timeIntervalSince(now))
+        
+        do {
+            try await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))
+        } catch {
+            return
+        }
+        
+        refreshNow(date: Date())
+    }
+    
+    private func upsertActivity(for ctx: ScheduleLessonContext, groupId: String, groupName: String) async {
+#if canImport(ActivityKit)
+        guard #available(iOS 16.1, *) else { return }
+        
+        let attributes = CurrentLessonActivityAttributes(groupId: groupId, groupName: groupName)
+        let state = CurrentLessonActivityAttributes.ContentState(
+            kind: ctx.kind.rawValue,
+            pairNumber: ctx.lesson.pairNumber,
+            subject: ctx.lesson.subject,
+            room: ctx.lesson.room,
+            startDate: ctx.startDate,
+            endDate: ctx.endDate
+        )
+        
+        let content = ActivityContent(state: state, staleDate: ctx.endDate.addingTimeInterval(60))
+        
+        if let existing = Activity<CurrentLessonActivityAttributes>.activities.first {
+            await existing.update(content)
+        } else {
+            do {
+                _ = try Activity.request(attributes: attributes, content: content, pushType: nil)
+            } catch {
+                // Если не получилось создать — просто молча игнорируем (например, нет разрешений/не поддерживается).
+                // Пользователь всё равно управляет фичой через toggle.
+            }
+        }
+#else
+        _ = (ctx, groupId, groupName) // silence unused warnings when ActivityKit отсутствует
+#endif
+    }
+}
+
+// MARK: - Activity Attributes
+
+/// Атрибуты Live Activity “текущая пара”.
+///
+/// NOTE: Для корректного отображения в виджете атрибуты должны совпадать и в widget extension.
+struct CurrentLessonActivityAttributes: Codable, Hashable {
+    let groupId: String
+    let groupName: String
+}
+
+#if canImport(ActivityKit)
+@available(iOS 16.1, *)
+extension CurrentLessonActivityAttributes: ActivityAttributes {
+    public struct ContentState: Codable, Hashable {
+        /// "current" | "next"
+        var kind: String
+        
+        var pairNumber: Int
+        var subject: String
+        var room: String?
+        var startDate: Date
+        var endDate: Date
+    }
+}
+#endif
+

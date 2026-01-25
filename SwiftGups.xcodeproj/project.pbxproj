@@ -8,10 +8,26 @@
 
 /* Begin PBXBuildFile section */
 		4416D4E62F12609200B1C537 /* FLEX in Frameworks */ = {isa = PBXBuildFile; productRef = 4416D4E52F12609200B1C537 /* FLEX */; };
+		44B000072E5C14D200EE0207 /* SwiftGupsWidget.appex in Embed App Extensions */ = {isa = PBXBuildFile; fileRef = 44B000012E5C14D200EE0201 /* SwiftGupsWidget.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
 /* End PBXBuildFile section */
+
+/* Begin PBXCopyFilesBuildPhase section */
+		44B000062E5C14D200EE0206 /* Embed App Extensions */ = {
+			isa = PBXCopyFilesBuildPhase;
+			buildActionMask = 2147483647;
+			dstPath = "";
+			dstSubfolderSpec = 13;
+			files = (
+				44B000072E5C14D200EE0207 /* SwiftGupsWidget.appex in Embed App Extensions */,
+			);
+			name = "Embed App Extensions";
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXCopyFilesBuildPhase section */
 
 /* Begin PBXFileReference section */
 		44A82CBB2E5C14D200EE0119 /* SwiftGups.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = SwiftGups.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		44B000012E5C14D200EE0201 /* SwiftGupsWidget.appex */ = {isa = PBXFileReference; explicitFileType = wrapper.app-extension; includeInIndex = 0; path = SwiftGupsWidget.appex; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
@@ -22,6 +38,13 @@
 			);
 			target = 44A82CBA2E5C14D200EE0119 /* SwiftGups */;
 		};
+		44B000082E5C14D500EE0208 /* Exceptions for "SwiftGupsWidget" folder in "SwiftGupsWidget" target */ = {
+			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
+			membershipExceptions = (
+				Info.plist,
+			);
+			target = 44B000022E5C14D200EE0202 /* SwiftGupsWidget */;
+		};
 /* End PBXFileSystemSynchronizedBuildFileExceptionSet section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
@@ -31,6 +54,14 @@
 				44A82CC82E5C14D500EE0119 /* Exceptions for "SwiftGups" folder in "SwiftGups" target */,
 			);
 			path = SwiftGups;
+			sourceTree = "<group>";
+		};
+		44B000092E5C14D200EE0209 /* SwiftGupsWidget */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			exceptions = (
+				44B000082E5C14D500EE0208 /* Exceptions for "SwiftGupsWidget" folder in "SwiftGupsWidget" target */,
+			);
+			path = SwiftGupsWidget;
 			sourceTree = "<group>";
 		};
 /* End PBXFileSystemSynchronizedRootGroup section */
@@ -44,6 +75,13 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		44B000042E5C14D200EE0204 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXFrameworksBuildPhase section */
 
 /* Begin PBXGroup section */
@@ -51,6 +89,7 @@
 			isa = PBXGroup;
 			children = (
 				44A82CBD2E5C14D200EE0119 /* SwiftGups */,
+				44B000092E5C14D200EE0209 /* SwiftGupsWidget */,
 				44A82CBC2E5C14D200EE0119 /* Products */,
 			);
 			sourceTree = "<group>";
@@ -59,6 +98,7 @@
 			isa = PBXGroup;
 			children = (
 				44A82CBB2E5C14D200EE0119 /* SwiftGups.app */,
+				44B000012E5C14D200EE0201 /* SwiftGupsWidget.appex */,
 			);
 			name = Products;
 			sourceTree = "<group>";
@@ -73,6 +113,7 @@
 				44A82CB72E5C14D200EE0119 /* Sources */,
 				44A82CB82E5C14D200EE0119 /* Frameworks */,
 				44A82CB92E5C14D200EE0119 /* Resources */,
+				44B000062E5C14D200EE0206 /* Embed App Extensions */,
 			);
 			buildRules = (
 			);
@@ -89,6 +130,26 @@
 			productReference = 44A82CBB2E5C14D200EE0119 /* SwiftGups.app */;
 			productType = "com.apple.product-type.application";
 		};
+		44B000022E5C14D200EE0202 /* SwiftGupsWidget */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 44B0000A2E5C14D500EE020A /* Build configuration list for PBXNativeTarget "SwiftGupsWidget" */;
+			buildPhases = (
+				44B000032E5C14D200EE0203 /* Sources */,
+				44B000042E5C14D200EE0204 /* Frameworks */,
+				44B000052E5C14D200EE0205 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			fileSystemSynchronizedGroups = (
+				44B000092E5C14D200EE0209 /* SwiftGupsWidget */,
+			);
+			name = SwiftGupsWidget;
+			productName = SwiftGupsWidget;
+			productReference = 44B000012E5C14D200EE0201 /* SwiftGupsWidget.appex */;
+			productType = "com.apple.product-type.app-extension";
+		};
 /* End PBXNativeTarget section */
 
 /* Begin PBXProject section */
@@ -100,6 +161,9 @@
 				LastUpgradeCheck = 1640;
 				TargetAttributes = {
 					44A82CBA2E5C14D200EE0119 = {
+						CreatedOnToolsVersion = 16.4;
+					};
+					44B000022E5C14D200EE0202 = {
 						CreatedOnToolsVersion = 16.4;
 					};
 				};
@@ -123,6 +187,7 @@
 			projectRoot = "";
 			targets = (
 				44A82CBA2E5C14D200EE0119 /* SwiftGups */,
+				44B000022E5C14D200EE0202 /* SwiftGupsWidget */,
 			);
 		};
 /* End PBXProject section */
@@ -135,10 +200,24 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		44B000052E5C14D200EE0205 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXResourcesBuildPhase section */
 
 /* Begin PBXSourcesBuildPhase section */
 		44A82CB72E5C14D200EE0119 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		44B000032E5C14D200EE0203 /* Sources */ = {
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
@@ -339,6 +418,54 @@
 			};
 			name = Release;
 		};
+		44B0000B2E5C14D500EE020B /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = C4L8Q37YC4;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = SwiftGupsWidget/Info.plist;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@executable_path/../../Frameworks",
+				);
+				MARKETING_VERSION = 1.0.5;
+				PRODUCT_BUNDLE_IDENTIFIER = tech.artemev.swiftgups.SwiftGupsWidget;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SKIP_INSTALL = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Debug;
+		};
+		44B0000C2E5C14D500EE020C /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = C4L8Q37YC4;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = SwiftGupsWidget/Info.plist;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@executable_path/../../Frameworks",
+				);
+				MARKETING_VERSION = 1.0.5;
+				PRODUCT_BUNDLE_IDENTIFIER = tech.artemev.swiftgups.SwiftGupsWidget;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SKIP_INSTALL = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Release;
+		};
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
@@ -356,6 +483,15 @@
 			buildConfigurations = (
 				44A82CCA2E5C14D500EE0119 /* Debug */,
 				44A82CCB2E5C14D500EE0119 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		44B0000A2E5C14D500EE020A /* Build configuration list for PBXNativeTarget "SwiftGupsWidget" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				44B0000B2E5C14D500EE020B /* Debug */,
+				44B0000C2E5C14D500EE020C /* Release */,
 			);
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;

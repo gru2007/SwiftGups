@@ -11,9 +11,12 @@ import CloudKit
 
 @main
 struct SwiftGupsApp: App {
+    @StateObject private var liveActivityManager = LiveActivityManager()
+    
     var body: some Scene {
         WindowGroup {
             MainAppView()
+                .environmentObject(liveActivityManager)
         }
         .modelContainer(createModelContainer())
     }
