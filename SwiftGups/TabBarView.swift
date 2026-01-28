@@ -10,7 +10,6 @@ import SwiftData
 
 enum AppTab: String, CaseIterable, Hashable {
     case schedule = "schedule"
-    case homework = "homework"
     case news = "news"
     case connect = "connect"
     case profile = "profile"
@@ -18,7 +17,6 @@ enum AppTab: String, CaseIterable, Hashable {
     var title: String {
         switch self {
         case .schedule: return "Расписание"
-        case .homework: return "Домашние задания"
         case .news: return "Новости"
         case .connect: return "Connect"
         case .profile: return "Профиль"
@@ -28,7 +26,6 @@ enum AppTab: String, CaseIterable, Hashable {
     var icon: String {
         switch self {
         case .schedule: return "calendar"
-        case .homework: return "book.closed"
         case .news: return "newspaper"
         case .connect: return "link.circle"
         case .profile: return "person.crop.circle"
@@ -38,7 +35,6 @@ enum AppTab: String, CaseIterable, Hashable {
     var color: Color {
         switch self {
         case .schedule: return .blue
-        case .homework: return .green
         case .news: return .orange
         case .connect: return .cyan
         case .profile: return .purple
@@ -110,12 +106,6 @@ struct TabBarView: View {
                             Text("Пары")
                         }
                     
-                    HomeworkTab(currentUser: currentUser, isInSplitView: false)
-                        .tabItem {
-                            Image(systemName: "book.closed")
-                            Text("Домашка")
-                        }
-                    
                     NewsTab(isInSplitView: false)
                         .tabItem {
                             Image(systemName: "newspaper")
@@ -138,8 +128,6 @@ struct TabBarView: View {
         switch selectedTab {
         case .schedule:
             ScheduleTab(currentUser: currentUser, isInSplitView: true)
-        case .homework:
-            HomeworkTab(currentUser: currentUser, isInSplitView: true)
         case .news:
             NewsTab(isInSplitView: true)
         case .connect:
@@ -383,7 +371,7 @@ struct AboutSheet: View {
                     .padding(.horizontal)
                 
                 VStack(alignment: .leading, spacing: 8) {
-                    Text("Версия 1.0")
+                    Text("Версия 2.0")
                     Text("Неофициальное приложение по ДВГУПС. Создано с ❤️ и SwiftUI.")
                         .foregroundColor(.secondary)
                     Text("Источник данных: dvgups.ru")
@@ -405,6 +393,9 @@ struct AboutSheet: View {
     }
 }
 
+// MARK: - Homework Tab (removed)
+// Экран «Домашка» больше не актуален — убран из приложения и исключён из сборки.
+#if false
 // MARK: - Homework Tab
 
 struct HomeworkTab: View {
@@ -1783,6 +1774,7 @@ struct EditHomeworkSheet: View {
         subjectPresetsStorage = existing.sorted().joined(separator: "|")
     }
 }
+#endif
 
 // MARK: - Profile Tab
 
@@ -2138,160 +2130,27 @@ struct EditProfileSheet: View {
 
 struct NewsTab: View {
     let isInSplitView: Bool
-    @StateObject private var newsAPIClient = DVGUPSNewsAPIClient()
-    @State private var newsItems: [NewsItem] = []
-    @State private var isLoading = false
-    @State private var errorMessage: String?
-    @State private var currentOffset = 0
-    @State private var hasMorePages = true
-    @State private var selectedNewsItem: NewsItem?
-    @Environment(\.horizontalSizeClass) private var horizontalSizeClass
-    
-    private var isIPad: Bool {
-        horizontalSizeClass == .regular
-    }
     
     var body: some View {
         SwiftUI.Group {
             if isInSplitView {
-                // iPad layout
-                newsContent
-                    .navigationTitle("Новости ДВГУПС")
+                AppNewsView()
+                    .navigationTitle("Новости")
                     .navigationBarTitleDisplayMode(.large)
-                    .toolbar {
-                        ToolbarItem(placement: .navigationBarTrailing) {
-                            refreshButton
-                        }
-                    }
             } else {
-                // iPhone layout
                 NavigationView {
-                    newsContent
-                        .navigationTitle("Новости ДВГУПС")
+                    AppNewsView()
+                        .navigationTitle("Новости")
                         .navigationBarTitleDisplayMode(.large)
-                        .toolbar {
-                            ToolbarItem(placement: .navigationBarTrailing) {
-                                refreshButton
-                            }
-                        }
                 }
-            }
-        }
-        .task {
-            await loadInitialNews()
-        }
-        .refreshable {
-            await refreshNews()
-        }
-        .sheet(item: $selectedNewsItem) { item in
-            NewsDetailSheet(newsItem: item)
-        }
-    }
-    
-    @ViewBuilder
-    private var newsContent: some View {
-        VStack(spacing: 0) {
-            if let errorMessage = errorMessage {
-                ErrorBanner(message: errorMessage) {
-                    self.errorMessage = nil
-                }
-                .padding(.horizontal)
-                .padding(.top)
-            }
-            
-            if newsItems.isEmpty && isLoading {
-                LoadingNewsView()
-            } else if newsItems.isEmpty {
-                EmptyNewsView() {
-                    Task { await loadInitialNews() }
-                }
-            } else {
-                ScrollView {
-                    LazyVStack(spacing: isIPad ? 20 : 16) {
-                        ForEach(newsItems) { item in
-                            NewsCard(newsItem: item, isCompact: !isIPad) {
-                                selectedNewsItem = item
-                            }
-                        }
-                        
-                        // Пагинация
-                        if hasMorePages {
-                            LoadMoreView(isLoading: isLoading) {
-                                Task { await loadMoreNews() }
-                            }
-                        }
-                    }
-                    .padding(.horizontal, isIPad ? 24 : 16)
-                    .padding(.vertical, isIPad ? 20 : 16)
-                }
-            }
-        }
-    }
-    
-    @ViewBuilder
-    private var refreshButton: some View {
-        Button {
-            Task { await refreshNews() }
-        } label: {
-            Image(systemName: "arrow.clockwise")
-                .foregroundColor(.orange)
-                .rotationEffect(.degrees(isLoading ? 360 : 0))
-                .animation(isLoading ? .linear(duration: 1).repeatForever(autoreverses: false) : .default, value: isLoading)
-        }
-        .disabled(isLoading)
-    }
-    
-    // MARK: - Data Loading
-    
-    private func loadInitialNews() async {
-        guard !isLoading else { return }
-        
-        isLoading = true
-        errorMessage = nil
-        
-        do {
-            let response = try await newsAPIClient.fetchNews(offset: 0)
-            await MainActor.run {
-                self.newsItems = response.items
-                self.currentOffset = response.nextOffset
-                self.hasMorePages = response.hasMorePages
-                self.isLoading = false
-            }
-        } catch {
-            await MainActor.run {
-                self.errorMessage = error.localizedDescription
-                self.isLoading = false
-            }
-        }
-    }
-    
-    private func refreshNews() async {
-        currentOffset = 0
-        await loadInitialNews()
-    }
-    
-    private func loadMoreNews() async {
-        guard !isLoading && hasMorePages else { return }
-        
-        isLoading = true
-        
-        do {
-            let response = try await newsAPIClient.fetchNews(offset: currentOffset)
-            await MainActor.run {
-                self.newsItems.append(contentsOf: response.items)
-                self.currentOffset = response.nextOffset
-                self.hasMorePages = response.hasMorePages
-                self.isLoading = false
-            }
-        } catch {
-            await MainActor.run {
-                self.errorMessage = error.localizedDescription
-                self.isLoading = false
             }
         }
     }
 }
 
+// MARK: - News Components (legacy, removed)
+// Старый экран «Новости ДВГУПС» больше не актуален — оставлен только новый `AppNewsView`.
+#if false
 // MARK: - News Components
 
 struct NewsCard: View {
@@ -2568,6 +2427,7 @@ struct NewsDetailSheet: View {
         .presentationDragIndicator(.visible)
     }
 }
+#endif
 
 #Preview {
     let config = ModelConfiguration(isStoredInMemoryOnly: true)

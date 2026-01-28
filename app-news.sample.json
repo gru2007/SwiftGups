@@ -1,0 +1,33 @@
+{
+  "schemaVersion": 1,
+  "updatedAt": "2026-01-28T10:00:00Z",
+  "banner": {
+    "id": "welcome-2026-01",
+    "style": "info",
+    "title": "Обновление новостей",
+    "markdown": "Теперь новости приложения приходят из **JSON**. Баннер можно скрыть (и он запомнится).\n\n- Поддержка Markdown\n- Картинки по URL\n- Changelog",
+    "imageUrl": "https://example.com/banner.png",
+    "link": {
+      "title": "Открыть Telegram",
+      "url": "https://t.me/example"
+    },
+    "dismissible": true
+  },
+  "news": [
+    {
+      "id": "news-2026-01-28",
+      "date": "2026-01-28",
+      "title": "Новый экран новостей",
+      "imageUrl": "https://example.com/news-cover.png",
+      "markdown": "Это пример новости в **Markdown**.\n\nМожно писать списки:\n- пункт 1\n- пункт 2\n\nИ ссылки: [SwiftGups](https://example.com)."
+    }
+  ],
+  "changelog": [
+    {
+      "version": "1.6.0",
+      "date": "2026-01-28",
+      "markdown": "- Удалены устаревшие экраны «Новости ДВГУПС» и «Домашка»\n- Добавлены новости приложения из JSON\n- Добавлен баннер, который можно отклонить"
+    }
+  ]
+}
+

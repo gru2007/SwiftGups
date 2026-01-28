@@ -22,5 +22,7 @@
 	<array>
 		<string>remote-notification</string>
 	</array>
+	<key>APP_NEWS_FEED_URL</key>
+	<string>https://s3.twcstorage.ru/c8302457-monkey/app-news.json</string>
 </dict>
 </plist>
