@@ -8,6 +8,7 @@
 
 /* Begin PBXBuildFile section */
 		4416D4E62F12609200B1C537 /* FLEX in Frameworks */ = {isa = PBXBuildFile; productRef = 4416D4E52F12609200B1C537 /* FLEX */; };
+		4435B8CB2F29F22000AB3B6C /* AlertKit in Frameworks */ = {isa = PBXBuildFile; productRef = 4435B8CA2F29F22000AB3B6C /* AlertKit */; };
 		44B000072E5C14D200EE0207 /* SwiftGupsWidget.appex in Embed App Extensions */ = {isa = PBXBuildFile; fileRef = 44B000012E5C14D200EE0201 /* SwiftGupsWidget.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
 /* End PBXBuildFile section */
 
@@ -27,7 +28,7 @@
 
 /* Begin PBXFileReference section */
 		44A82CBB2E5C14D200EE0119 /* SwiftGups.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = SwiftGups.app; sourceTree = BUILT_PRODUCTS_DIR; };
-		44B000012E5C14D200EE0201 /* SwiftGupsWidget.appex */ = {isa = PBXFileReference; explicitFileType = wrapper.app-extension; includeInIndex = 0; path = SwiftGupsWidget.appex; sourceTree = BUILT_PRODUCTS_DIR; };
+		44B000012E5C14D200EE0201 /* SwiftGupsWidget.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = SwiftGupsWidget.appex; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
@@ -71,6 +72,7 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				4435B8CB2F29F22000AB3B6C /* AlertKit in Frameworks */,
 				4416D4E62F12609200B1C537 /* FLEX in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
@@ -125,6 +127,7 @@
 			name = SwiftGups;
 			packageProductDependencies = (
 				4416D4E52F12609200B1C537 /* FLEX */,
+				4435B8CA2F29F22000AB3B6C /* AlertKit */,
 			);
 			productName = SwiftGups;
 			productReference = 44A82CBB2E5C14D200EE0119 /* SwiftGups.app */;
@@ -180,6 +183,7 @@
 			minimizedProjectReferenceProxies = 1;
 			packageReferences = (
 				4416D4E42F12609200B1C537 /* XCRemoteSwiftPackageReference "FLEX-dylib" */,
+				4435B8C92F29F22000AB3B6C /* XCRemoteSwiftPackageReference "AlertKit" */,
 			);
 			preferredProjectObjectVersion = 77;
 			productRefGroup = 44A82CBC2E5C14D200EE0119 /* Products */;
@@ -253,7 +257,7 @@
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				MARKETING_VERSION = 1.0.5;
+				MARKETING_VERSION = 2.0;
 				PRODUCT_BUNDLE_IDENTIFIER = tech.artemev.swiftgups;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SWIFT_EMIT_LOC_STRINGS = YES;
@@ -273,6 +277,7 @@
 				CURRENT_PROJECT_VERSION = 1;
 				DEVELOPMENT_TEAM = C4L8Q37YC4;
 				ENABLE_PREVIEWS = YES;
+				EXCLUDED_SOURCE_FILE_NAMES = "FLEX*";
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = SwiftGups/Info.plist;
 				INFOPLIST_KEY_CFBundleDisplayName = SwiftGups;
@@ -288,7 +293,7 @@
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				MARKETING_VERSION = 1.0.5;
+				MARKETING_VERSION = 2.0;
 				PRODUCT_BUNDLE_IDENTIFIER = tech.artemev.swiftgups;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SWIFT_EMIT_LOC_STRINGS = YES;
@@ -507,6 +512,14 @@
 				kind = branch;
 			};
 		};
+		4435B8C92F29F22000AB3B6C /* XCRemoteSwiftPackageReference "AlertKit" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/sparrowcode/AlertKit";
+			requirement = {
+				kind = upToNextMajorVersion;
+				minimumVersion = 5.1.9;
+			};
+		};
 /* End XCRemoteSwiftPackageReference section */
 
 /* Begin XCSwiftPackageProductDependency section */
@@ -514,6 +527,11 @@
 			isa = XCSwiftPackageProductDependency;
 			package = 4416D4E42F12609200B1C537 /* XCRemoteSwiftPackageReference "FLEX-dylib" */;
 			productName = FLEX;
+		};
+		4435B8CA2F29F22000AB3B6C /* AlertKit */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 4435B8C92F29F22000AB3B6C /* XCRemoteSwiftPackageReference "AlertKit" */;
+			productName = AlertKit;
 		};
 /* End XCSwiftPackageProductDependency section */
 	};

@@ -1,6 +1,15 @@
 {
-  "originHash" : "f2f73bea4a61dad121b87d1e83b1a2ef7c368587120bef1a54a047d6fdad5df0",
+  "originHash" : "6add29a73576616d2d66c2ffc906e0f8e5e5750a1bf8213fae232ef99b8c67c4",
   "pins" : [
+    {
+      "identity" : "alertkit",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/sparrowcode/AlertKit",
+      "state" : {
+        "revision" : "3b73be8db5a7e7efaf474c6ed919f5a437d843c9",
+        "version" : "5.1.9"
+      }
+    },
     {
       "identity" : "flex-dylib",
       "kind" : "remoteSourceControl",

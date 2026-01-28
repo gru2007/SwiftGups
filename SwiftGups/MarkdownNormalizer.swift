@@ -19,11 +19,27 @@ enum MarkdownNormalizer {
         
         // Single newlines become hard breaks in Markdown.
         // Keep paragraph breaks (double newlines) as-is.
-        text = text.replacingOccurrences(
-            of: #"(?<!\n)\n(?!\n)"#,
-            with: "  \n",
-            options: .regularExpression
-        )
+        // Process line by line to handle newlines correctly
+        let lines = text.components(separatedBy: "\n")
+        var result: [String] = []
+        
+        for (index, line) in lines.enumerated() {
+            let isLastLine = index == lines.count - 1
+            let nextLineIsEmpty = index < lines.count - 1 && lines[index + 1].isEmpty
+            
+            if line.isEmpty {
+                // Empty line - paragraph break, keep as-is
+                result.append("")
+            } else if !isLastLine && !nextLineIsEmpty {
+                // Non-empty line followed by non-empty line - add hard break
+                result.append(line + "  ")
+            } else {
+                // Last line or line before empty line - no hard break
+                result.append(line)
+            }
+        }
+        
+        text = result.joined(separator: "\n")
         
         return text
     }

@@ -7,6 +7,7 @@ import ActivityKit
 @MainActor
 final class LiveActivityManager: ObservableObject {
     private var refreshTask: Task<Void, Never>?
+    private var periodicRefreshTask: Task<Void, Never>?
     
     private var cachedSchedule: Schedule?
     private var cachedGroupId: String?
@@ -68,11 +69,29 @@ final class LiveActivityManager: ObservableObject {
             await self.upsertActivity(for: ctx, groupId: groupId, groupName: groupName)
             await self.scheduleNextRefresh(for: ctx, now: date)
         }
+        
+        // Запускаем периодическое обновление каждую минуту для реакции на изменение времени системы
+        startPeriodicRefresh()
+    }
+    
+    private func startPeriodicRefresh() {
+        periodicRefreshTask?.cancel()
+        periodicRefreshTask = Task { [weak self] in
+            guard let self else { return }
+            while !Task.isCancelled {
+                try? await Task.sleep(nanoseconds: 60 * 1_000_000_000) // Каждую минуту
+                if self.isEnabled {
+                    await self.refreshNow()
+                }
+            }
+        }
     }
     
     func stopAll() {
         refreshTask?.cancel()
         refreshTask = nil
+        periodicRefreshTask?.cancel()
+        periodicRefreshTask = nil
         
 #if canImport(ActivityKit)
         if #available(iOS 16.1, *) {
@@ -113,7 +132,19 @@ final class LiveActivityManager: ObservableObject {
     private func upsertActivity(for ctx: ScheduleLessonContext, groupId: String, groupName: String) async {
 #if canImport(ActivityKit)
         guard #available(iOS 16.1, *) else { return }
-        
+
+        // --- Поиск следующей пары ---
+        var nextLesson: Lesson? = nil
+        var nextCtx: ScheduleLessonContext? = nil
+        if let schedule = cachedSchedule {
+            let now = Date()
+            // ищем следующую пару после endDate текущей
+            nextCtx = schedule.currentOrNextLessonContext(at: ctx.endDate.addingTimeInterval(1))
+            if let next = nextCtx, next.kind == .next {
+                nextLesson = next.lesson
+            }
+        }
+
         let attributes = CurrentLessonActivityAttributes(groupId: groupId, groupName: groupName)
         let state = CurrentLessonActivityAttributes.ContentState(
             kind: ctx.kind.rawValue,
@@ -121,23 +152,30 @@ final class LiveActivityManager: ObservableObject {
             subject: ctx.lesson.subject,
             room: ctx.lesson.room,
             startDate: ctx.startDate,
-            endDate: ctx.endDate
+            endDate: ctx.endDate,
+            // ниже: next-пара, если есть
+            nextPairNumber: nextLesson?.pairNumber,
+            nextSubject: nextLesson?.subject,
+            nextRoom: nextLesson?.room,
+            nextStartDate: nextCtx?.startDate,
+            nextEndDate: nextCtx?.endDate
         )
-        
-        let content = ActivityContent(state: state, staleDate: ctx.endDate.addingTimeInterval(60))
-        
+
+        // staleDate - когда данные считаются устаревшими (обновляем каждую минуту)
+        let staleDate = Date().addingTimeInterval(60)
+        let content = ActivityContent(state: state, staleDate: staleDate)
+
         if let existing = Activity<CurrentLessonActivityAttributes>.activities.first {
             await existing.update(content)
         } else {
             do {
                 _ = try Activity.request(attributes: attributes, content: content, pushType: nil)
             } catch {
-                // Если не получилось создать — просто молча игнорируем (например, нет разрешений/не поддерживается).
-                // Пользователь всё равно управляет фичой через toggle.
+                // ignore
             }
         }
 #else
-        _ = (ctx, groupId, groupName) // silence unused warnings when ActivityKit отсутствует
+        _ = (ctx, groupId, groupName)
 #endif
     }
 }
@@ -164,6 +202,13 @@ extension CurrentLessonActivityAttributes: ActivityAttributes {
         var room: String?
         var startDate: Date
         var endDate: Date
+
+        // --- Данные следующей пары (если есть) ---
+        var nextPairNumber: Int?
+        var nextSubject: String?
+        var nextRoom: String?
+        var nextStartDate: Date?
+        var nextEndDate: Date?
     }
 }
 #endif

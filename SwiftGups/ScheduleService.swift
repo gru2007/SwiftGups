@@ -233,6 +233,15 @@ class ScheduleService: ObservableObject {
         }
     }
     
+    /// Возвращает отфильтрованные факультеты по поисковому запросу
+    func filteredFaculties(searchText: String) -> [Faculty] {
+        guard !searchText.isEmpty else { return faculties }
+        
+        return faculties.filter { faculty in
+            faculty.name.localizedCaseInsensitiveContains(searchText)
+        }
+    }
+    
     /// Загружает расписание на неделю для выбранной группы
     func loadWeekSchedule() async {
         guard let group = selectedGroup else {

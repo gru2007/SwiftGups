@@ -4,9 +4,6 @@ import Foundation
 import ActivityKit
 #endif
 
-/// Атрибуты Live Activity “текущая пара”.
-///
-/// Важно: структура должна совпадать с определением в основном приложении.
 struct CurrentLessonActivityAttributes: Codable, Hashable {
     let groupId: String
     let groupName: String
@@ -24,7 +21,13 @@ extension CurrentLessonActivityAttributes: ActivityAttributes {
         var room: String?
         var startDate: Date
         var endDate: Date
+
+        // --- Данные следующей пары (если есть) ---
+        var nextPairNumber: Int?
+        var nextSubject: String?
+        var nextRoom: String?
+        var nextStartDate: Date?
+        var nextEndDate: Date?
     }
 }
 #endif
-

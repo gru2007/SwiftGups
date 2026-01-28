@@ -42,10 +42,12 @@ struct RegistrationView: View {
     @State private var selectedFaculty: Faculty?
     @State private var selectedGroup: Group?
     @State private var searchText: String = ""
+    @State private var facultySearchText: String = ""
     @State private var showingProgress = false
     @State private var progressStep = 0
     @State private var errorMessage: String?
     @State private var skipGroupSelection = false // Пропуск выбора группы при недоступности сайта
+    @FocusState private var isNameFieldFocused: Bool
     
     private var isIPad: Bool {
         horizontalSizeClass == .regular
@@ -181,6 +183,11 @@ struct RegistrationView: View {
                 }
             }
         }
+        .onDisappear {
+            // Закрываем клавиатуру при выходе с экрана
+            isNameFieldFocused = false
+            UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
+        }
         .task {
             await scheduleService.ensureFacultiesLoaded()
             if selectedFaculty != nil {
@@ -205,12 +212,14 @@ struct RegistrationView: View {
                 title: "Ваше имя",
                 text: $name,
                 icon: "person.fill",
-                placeholder: "Введите ваше имя"
+                placeholder: "Введите ваше имя",
+                isFocused: $isNameFieldFocused
             )
             
             // Выбор факультета
             FacultyPickerView(
                 selectedFaculty: $selectedFaculty,
+                searchText: $facultySearchText,
                 scheduleService: scheduleService
             )
             
@@ -303,6 +312,10 @@ struct RegistrationView: View {
             return
         }
 
+        // Закрываем клавиатуру перед сохранением
+        isNameFieldFocused = false
+        UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
+        
         showingProgress = true
 
         // Создаем пользователя, даже если группа не выбрана
@@ -337,8 +350,7 @@ struct CustomTextField: View {
     @Binding var text: String
     let icon: String
     let placeholder: String
-    
-    @FocusState private var isFocused: Bool
+    @FocusState.Binding var isFocused: Bool
     
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
@@ -365,10 +377,15 @@ struct CustomTextField: View {
 
 struct FacultyPickerView: View {
     @Binding var selectedFaculty: Faculty?
+    @Binding var searchText: String
     @ObservedObject var scheduleService: ScheduleService
     
+    private var filteredFaculties: [Faculty] {
+        scheduleService.filteredFaculties(searchText: searchText)
+    }
+    
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
+        VStack(alignment: .leading, spacing: 12) {
             HStack {
                 Image(systemName: "building.2.fill")
                     .foregroundColor(.blue)
@@ -377,48 +394,52 @@ struct FacultyPickerView: View {
                     .foregroundColor(.primary)
             }
             
-            Menu {
-                if scheduleService.isLoadingFaculties {
-                    Text("Загрузка институтов...")
-                } else if scheduleService.faculties.isEmpty {
-                    Text("Нет доступных институтов")
-                } else {
-                    ForEach(scheduleService.faculties) { faculty in
-                        Button(action: {
+            // Поле поиска
+            SearchBar(text: $searchText, placeholder: "Поиск института...")
+            
+            if scheduleService.isLoadingFaculties {
+                HStack {
+                    Spacer()
+                    ProgressView("Загрузка институтов...")
+                        .foregroundColor(.secondary)
+                    Spacer()
+                }
+                .padding()
+            } else if filteredFaculties.isEmpty && !scheduleService.faculties.isEmpty {
+                Text("Институты не найдены")
+                    .foregroundColor(.secondary)
+                    .frame(maxWidth: .infinity, alignment: .center)
+                    .padding()
+            } else if scheduleService.faculties.isEmpty {
+                Text("Нет доступных институтов")
+                    .foregroundColor(.secondary)
+                    .frame(maxWidth: .infinity, alignment: .center)
+                    .padding()
+            } else {
+                // Список институтов
+                LazyVGrid(columns: [
+                    GridItem(.flexible()),
+                    GridItem(.flexible())
+                ], spacing: 12) {
+                    ForEach(filteredFaculties.prefix(8)) { faculty in
+                        FacultySelectionCard(
+                            faculty: faculty,
+                            isSelected: selectedFaculty?.id == faculty.id
+                        ) {
                             selectedFaculty = faculty
                             scheduleService.selectFaculty(faculty)
-                        }) {
-                            HStack {
-                                Text(faculty.name)
-                                if selectedFaculty?.id == faculty.id {
-                                    Spacer()
-                                    Image(systemName: "checkmark")
-                                        .foregroundColor(.blue)
-                                }
-                            }
+                            searchText = ""
                         }
                     }
                 }
-            } label: {
-                HStack {
-                    Text(selectedFaculty?.name ?? "Выберите институт/факультет")
-                        .foregroundColor(selectedFaculty != nil ? .primary : .secondary)
-                        .lineLimit(2)
-                        .multilineTextAlignment(.leading)
-                    
-                    Spacer()
-                    
-                    Image(systemName: "chevron.down")
-                        .foregroundColor(.secondary)
+                
+                if filteredFaculties.count > 8 {
+                    Text("И еще \(filteredFaculties.count - 8) институтов...")
                         .font(.caption)
+                        .foregroundColor(.secondary)
+                        .frame(maxWidth: .infinity, alignment: .center)
+                        .padding(.top, 8)
                 }
-                .frame(height: 44)
-                .padding(.horizontal, 12)
-                .background(
-                    RoundedRectangle(cornerRadius: 12)
-                        .fill(Color(.systemGray6))
-                        .stroke(Color(.systemGray4), lineWidth: 1)
-                )
             }
             
             FacultyMissingIdBanner(missingNames: scheduleService.facultiesMissingIDs)
@@ -487,83 +508,6 @@ struct GroupPickerView: View {
                 }
             }
         }
-    }
-}
-
-struct SearchBar: View {
-    @Binding var text: String
-    let placeholder: String
-    
-    var body: some View {
-        HStack {
-            Image(systemName: "magnifyingglass")
-                .foregroundColor(.secondary)
-            
-            TextField(placeholder, text: $text)
-                .textFieldStyle(PlainTextFieldStyle())
-            
-            if !text.isEmpty {
-                Button("Очистить") {
-                    text = ""
-                }
-                .font(.caption)
-                .foregroundColor(.blue)
-            }
-        }
-        .frame(height: 44)
-        .padding(.horizontal, 12)
-        .background(
-            RoundedRectangle(cornerRadius: 12)
-                .fill(Color(.systemGray6))
-                .stroke(Color(.systemGray4), lineWidth: 1)
-        )
-    }
-}
-
-struct GroupSelectionCard: View {
-    let group: Group
-    let isSelected: Bool
-    let action: () -> Void
-    
-    var body: some View {
-        Button(action: {
-            let impactFeedback = UIImpactFeedbackGenerator(style: .light)
-            impactFeedback.impactOccurred()
-            
-            withAnimation(.easeInOut(duration: 0.2)) {
-                action()
-            }
-        }) {
-            VStack(alignment: .leading, spacing: 8) {
-                Text(group.name)
-                    .font(.headline)
-                    .fontWeight(.semibold)
-                    .foregroundColor(isSelected ? .white : .primary)
-                    .lineLimit(1)
-                
-                Text(group.fullName)
-                    .font(.caption)
-                    .foregroundColor(isSelected ? .white.opacity(0.8) : .secondary)
-                    .lineLimit(2)
-                    .multilineTextAlignment(.leading)
-                
-                Spacer()
-            }
-            .frame(height: 80)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(12)
-            .background(
-                RoundedRectangle(cornerRadius: 12)
-                    .fill(
-                        isSelected
-                        ? LinearGradient(colors: [.blue, .purple], startPoint: .topLeading, endPoint: .bottomTrailing)
-                        : LinearGradient(colors: [Color(.systemGray6)], startPoint: .topLeading, endPoint: .bottomTrailing)
-                    )
-                    .shadow(color: isSelected ? .blue.opacity(0.3) : .clear, radius: 5, x: 0, y: 2)
-            )
-        }
-        .scaleEffect(isSelected ? 1.02 : 1.0)
-        .animation(.easeInOut(duration: 0.2), value: isSelected)
     }
 }
 
