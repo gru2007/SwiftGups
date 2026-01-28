@@ -12,6 +12,14 @@ import CloudKit
 @main
 struct SwiftGupsApp: App {
     @StateObject private var liveActivityManager = LiveActivityManager()
+    @Environment(\.scenePhase) private var scenePhase
+    
+    init() {
+        // Регистрируем фоновые задачи при запуске приложения
+        if #available(iOS 13.0, *) {
+            BackgroundTaskManager.shared.registerBackgroundTasks()
+        }
+    }
     
     var body: some Scene {
         WindowGroup {
@@ -19,6 +27,34 @@ struct SwiftGupsApp: App {
                 .environmentObject(liveActivityManager)
         }
         .modelContainer(createModelContainer())
+        .onChange(of: scenePhase) { oldPhase, newPhase in
+            if #available(iOS 13.0, *) {
+                handleScenePhaseChange(from: oldPhase, to: newPhase)
+            }
+        }
+    }
+    
+    @available(iOS 13.0, *)
+    private func handleScenePhaseChange(from oldPhase: ScenePhase, to newPhase: ScenePhase) {
+        switch newPhase {
+        case .background:
+            // Приложение уходит в фон - планируем фоновые задачи
+            if liveActivityManager.isEnabled {
+                BackgroundTaskManager.shared.scheduleBackgroundRefresh()
+                print("📱 App went to background, scheduled background refresh")
+            }
+        case .active:
+            // Приложение стало активным - перепланируем задачи если нужно
+            if liveActivityManager.isEnabled {
+                BackgroundTaskManager.shared.scheduleBackgroundRefresh()
+                print("📱 App became active, rescheduled background refresh")
+            }
+        case .inactive:
+            // Приложение неактивно (переходное состояние)
+            break
+        @unknown default:
+            break
+        }
     }
     
     private func createModelContainer() -> ModelContainer {

@@ -143,10 +143,19 @@ struct ScheduleTab: View {
     @StateObject private var appNewsService = AppNewsService()
     @State private var showingLessonTimes = false
     @EnvironmentObject private var liveActivityManager: LiveActivityManager
+    @Environment(\.modelContext) private var modelContext
     @AppStorage(LiveActivitySettings.enabledKey) private var liveActivityEnabled: Bool = false
 
+    // Проверяем валидность пользователя
+    private var isUserValid: Bool {
+        modelContext.model(for: currentUser.persistentModelID) != nil
+    }
+    
     // Проверяем, указал ли пользователь группу
-    private var hasGroup: Bool { !currentUser.groupId.isEmpty }
+    private var hasGroup: Bool {
+        guard isUserValid else { return false }
+        return !currentUser.groupId.isEmpty
+    }
     
     var body: some View {
         SwiftUI.Group {
@@ -239,14 +248,28 @@ struct ScheduleTab: View {
         }
         .task { await appNewsService.loadIfNeeded() }
         .onAppear {
+            // Проверяем валидность пользователя перед использованием
+            guard isUserValid else { return }
+            
             // Автоматически выбираем факультет и группу пользователя
             guard hasGroup else { return }
+            // Сохраняем значения перед async операциями
+            let groupId = currentUser.groupId
+            let groupName = currentUser.groupName
+            
             Task { @MainActor in
                 await setupScheduleForUser()
             }
             
             // Обновляем входные данные для Live Activity (группа известна сразу).
-            liveActivityManager.updateGroup(groupId: currentUser.groupId, groupName: currentUser.groupName)
+            liveActivityManager.updateGroup(groupId: groupId, groupName: groupName)
+            
+            // Если Live Activity уже включена, планируем фоновые задачи
+            if liveActivityManager.isEnabled {
+                if #available(iOS 13.0, *) {
+                    BackgroundTaskManager.shared.scheduleBackgroundRefresh()
+                }
+            }
         }
         .onReceive(scheduleService.$currentSchedule) { schedule in
             liveActivityManager.updateSchedule(schedule)
@@ -265,7 +288,20 @@ struct ScheduleTab: View {
     }
     
     private func setupScheduleForUser() async {
-        guard hasGroup else {
+        // Проверяем валидность пользователя и сохраняем значения ДО async операций
+        guard isUserValid else {
+            print("⚠️ User is no longer valid, skipping schedule setup")
+            return
+        }
+        
+        // Сохраняем значения из SwiftData объекта в локальные переменные
+        // чтобы не обращаться к объекту после await (когда контекст может быть сброшен)
+        let userId = currentUser.facultyId
+        let userGroupId = currentUser.groupId
+        let userGroupName = currentUser.groupName
+        let userName = currentUser.name
+        
+        guard !userGroupId.isEmpty else {
             print("⚠️ У пользователя не выбрана группа, расписание не загружается")
             return
         }
@@ -273,13 +309,13 @@ struct ScheduleTab: View {
         await scheduleService.ensureFacultiesLoaded()
         
         guard let faculty =
-                scheduleService.faculties.first(where: { $0.id == currentUser.facultyId }) ??
-                Faculty.allFaculties.first(where: { $0.id == currentUser.facultyId }) else {
-            print("❌ Faculty not found for user: \(currentUser.facultyId)")
+                scheduleService.faculties.first(where: { $0.id == userId }) ??
+                Faculty.allFaculties.first(where: { $0.id == userId }) else {
+            print("❌ Faculty not found for user: \(userId)")
             return
         }
 
-        print("✅ Setting up schedule for user: \(currentUser.name), faculty: \(faculty.name), group: \(currentUser.groupId)")
+        print("✅ Setting up schedule for user: \(userName), faculty: \(faculty.name), group: \(userGroupId)")
         
         // Устанавливаем факультет напрямую без вызова selectFaculty (чтобы избежать двойной загрузки)
         scheduleService.selectedFaculty = faculty
@@ -293,7 +329,7 @@ struct ScheduleTab: View {
             
         print("📋 Loaded \(scheduleService.groups.count) groups")
             
-        if let group = scheduleService.groups.first(where: { $0.id == currentUser.groupId }) {
+        if let group = scheduleService.groups.first(where: { $0.id == userGroupId }) {
             print("✅ Found user's group: \(group.name)")
             scheduleService.selectGroup(group)
         } else {
@@ -1839,6 +1875,11 @@ struct ProfileTab: View {
     @State private var showingLessonTimes = false
     @State private var showingAbout = false
     
+    // Проверяем валидность пользователя
+    private var isUserValid: Bool {
+        modelContext.model(for: currentUser.persistentModelID) != nil
+    }
+    
     var body: some View {
         SwiftUI.Group {
             if isInSplitView {
@@ -1846,8 +1887,10 @@ struct ProfileTab: View {
                 ScrollView {
                     VStack(spacing: 24) {
                         // Профиль пользователя
-                        ProfileHeader(user: currentUser)
-                            .padding(.top)
+                        if isUserValid {
+                            ProfileHeader(user: currentUser)
+                                .padding(.top)
+                        }
                         
                         // Статус синхронизации
                         CloudKitStatusView(cloudKitService: cloudKitService)
@@ -1899,8 +1942,10 @@ struct ProfileTab: View {
                     ScrollView {
                         VStack(spacing: 24) {
                             // Профиль пользователя
-                            ProfileHeader(user: currentUser)
-                                .padding(.top)
+                            if isUserValid {
+                                ProfileHeader(user: currentUser)
+                                    .padding(.top)
+                            }
                             
                             // Статус синхронизации
                             CloudKitStatusView(cloudKitService: cloudKitService)
@@ -1950,7 +1995,9 @@ struct ProfileTab: View {
             }
         }
         .sheet(isPresented: $showingEditProfile) {
-            EditProfileSheet(user: currentUser)
+            if isUserValid {
+                EditProfileSheet(user: currentUser)
+            }
         }
         .sheet(isPresented: $showingLessonTimes) {
             LessonTimesSheet()
@@ -1974,8 +2021,26 @@ struct ProfileTab: View {
     }
     
     private func resetUserData() {
+        // Закрываем все открытые sheet'ы перед удалением
+        showingEditProfile = false
+        showingDeleteConfirmation = false
+        showingLessonTimes = false
+        showingAbout = false
+        
+        // Проверяем, что объект еще существует в контексте
+        guard modelContext.model(for: currentUser.persistentModelID) != nil else {
+            print("⚠️ User already deleted")
+            return
+        }
+        
         modelContext.delete(currentUser)
-        try? modelContext.save()
+        
+        do {
+            try modelContext.save()
+            print("✅ User data reset successfully")
+        } catch {
+            print("❌ Failed to save after user deletion: \(error)")
+        }
     }
 }
 
@@ -1984,9 +2049,11 @@ struct ProfileTab: View {
 struct LiveActivityToggleCard: View {
     @EnvironmentObject private var liveActivityManager: LiveActivityManager
     @Binding var isOn: Bool
+    @State private var showingBackgroundInfo = false
     
     var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
+        VStack(alignment: .leading, spacing: 12) {
+            // Основной переключатель
             HStack(spacing: 12) {
                 Image(systemName: "rectangle.stack.badge.person.crop")
                     .font(.title3)
@@ -2014,6 +2081,13 @@ struct LiveActivityToggleCard: View {
                         .foregroundColor(.secondary)
                 }
             }
+            
+            // Информация о фоновых обновлениях (только если включено)
+            if isOn {
+                Divider()
+                
+                BackgroundTasksInfoView()
+            }
         }
         .padding()
         .background(
@@ -2023,6 +2097,119 @@ struct LiveActivityToggleCard: View {
         .onChange(of: isOn) { enabled in
             liveActivityManager.setEnabled(enabled)
         }
+    }
+}
+
+// MARK: - Background Tasks Info View
+
+@available(iOS 13.0, *)
+struct BackgroundTasksInfoView: View {
+    @State private var backgroundRefreshStatus: UIBackgroundRefreshStatus = .available
+    
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            // Заголовок
+            HStack(spacing: 8) {
+                Image(systemName: "arrow.clockwise.circle.fill")
+                    .font(.caption)
+                    .foregroundColor(.blue)
+                
+                Text("Фоновые обновления")
+                    .font(.subheadline)
+                    .fontWeight(.medium)
+                    .foregroundColor(.primary)
+            }
+            
+            // Статус Background App Refresh
+            HStack(spacing: 8) {
+                let status = backgroundRefreshStatus.toBackgroundRefreshStatus
+                
+                Image(systemName: status.icon)
+                    .font(.caption)
+                    .foregroundColor(status.color)
+                
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Background App Refresh: \(status.description)")
+                        .font(.caption)
+                        .foregroundColor(.primary)
+                    
+                    if backgroundRefreshStatus != .available {
+                        Text("Обновления в фоне могут не работать")
+                            .font(.caption2)
+                            .foregroundColor(.secondary)
+                    } else {
+                        Text("Live Activity обновляется даже когда приложение закрыто")
+                            .font(.caption2)
+                            .foregroundColor(.secondary)
+                    }
+                }
+                
+                Spacer()
+            }
+            .padding(.vertical, 4)
+            
+            // Информация о работе
+            VStack(alignment: .leading, spacing: 6) {
+                HStack(alignment: .top, spacing: 6) {
+                    Image(systemName: "info.circle")
+                        .font(.caption2)
+                        .foregroundColor(.blue)
+                        .padding(.top, 2)
+                    
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("Как это работает:")
+                            .font(.caption2)
+                            .fontWeight(.medium)
+                            .foregroundColor(.primary)
+                        
+                        Text("• Обновления каждые 15-30 минут в фоне")
+                            .font(.caption2)
+                            .foregroundColor(.secondary)
+                        
+                        Text("• Автоматическое обновление при смене пары")
+                            .font(.caption2)
+                            .foregroundColor(.secondary)
+                        
+                        Text("• Работает даже когда приложение закрыто")
+                            .font(.caption2)
+                            .foregroundColor(.secondary)
+                    }
+                }
+            }
+            .padding(.top, 4)
+            
+            // Кнопка настроек (если Background App Refresh не включен)
+            if backgroundRefreshStatus != .available {
+                Button(action: {
+                    BackgroundTasksStatus.openSettings()
+                }) {
+                    HStack {
+                        Image(systemName: "gear")
+                            .font(.caption)
+                        Text("Открыть настройки")
+                            .font(.caption)
+                    }
+                    .foregroundColor(.blue)
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 6)
+                    .background(
+                        RoundedRectangle(cornerRadius: 8)
+                            .fill(Color.blue.opacity(0.1))
+                    )
+                }
+                .padding(.top, 4)
+            }
+        }
+        .onAppear {
+            updateBackgroundRefreshStatus()
+        }
+        .onReceive(NotificationCenter.default.publisher(for: UIApplication.didBecomeActiveNotification)) { _ in
+            updateBackgroundRefreshStatus()
+        }
+    }
+    
+    private func updateBackgroundRefreshStatus() {
+        backgroundRefreshStatus = UIApplication.shared.backgroundRefreshStatus
     }
 }
 
@@ -2688,10 +2875,10 @@ struct FacultySelectionCard: View {
         }) {
             VStack(alignment: .leading, spacing: 8) {
                 Text(faculty.name)
-                    .font(.headline)
-                    .fontWeight(.semibold)
+                    .font(.subheadline)
+                    .fontWeight(.medium)
                     .foregroundColor(isSelected ? .white : .primary)
-                    .lineLimit(2)
+                    .lineLimit(3)
                     .multilineTextAlignment(.leading)
                 
                 Spacer()

@@ -22,8 +22,15 @@ final class LiveActivityManager: ObservableObject {
         
         if enabled {
             refreshNow()
+            // Планируем фоновые обновления
+            if #available(iOS 13.0, *) {
+                BackgroundTaskManager.shared.scheduleBackgroundRefresh()
+            }
         } else {
             stopAll()
+            if #available(iOS 13.0, *) {
+                BackgroundTaskManager.shared.cancelAllTasks()
+            }
         }
     }
     
@@ -39,8 +46,22 @@ final class LiveActivityManager: ObservableObject {
     func updateGroup(groupId: String?, groupName: String?) {
         cachedGroupId = groupId
         cachedGroupName = groupName
+        
+        // Сохраняем в UserDefaults для доступа из фона
+        if let groupId = groupId, !groupId.isEmpty,
+           let groupName = groupName, !groupName.isEmpty {
+            UserDefaults.standard.set(groupId, forKey: "liveActivity.groupId")
+            UserDefaults.standard.set(groupName, forKey: "liveActivity.groupName")
+        } else {
+            UserDefaults.standard.removeObject(forKey: "liveActivity.groupId")
+            UserDefaults.standard.removeObject(forKey: "liveActivity.groupName")
+        }
+        
         if (groupId ?? "").isEmpty || (groupName ?? "").isEmpty {
             stopAll()
+            if #available(iOS 13.0, *) {
+                BackgroundTaskManager.shared.cancelAllTasks()
+            }
         } else {
             refreshNow()
         }
@@ -107,7 +128,7 @@ final class LiveActivityManager: ObservableObject {
     private func scheduleNextRefresh(for ctx: ScheduleLessonContext, now: Date) async {
         // Когда обновляться:
         // - если сейчас идёт пара -> в её конец (чтобы переключиться на следующую/завершить)
-        // - если показываем “следующую” -> в её начало (чтобы переключиться в “current”)
+        // - если показываем "следующую" -> в её начало (чтобы переключиться в "current")
         let nextDate: Date
         switch ctx.kind {
         case .current:
@@ -116,9 +137,14 @@ final class LiveActivityManager: ObservableObject {
             nextDate = ctx.startDate
         }
         
-        // Небольшой буфер, чтобы гарантированно “перешли” границу.
+        // Небольшой буфер, чтобы гарантированно "перешли" границу.
         let fireAt = nextDate.addingTimeInterval(1)
         let delay = max(1, fireAt.timeIntervalSince(now))
+        
+        // Планируем фоновое обновление на время перехода пары
+        if #available(iOS 13.0, *) {
+            BackgroundTaskManager.shared.scheduleRefresh(at: fireAt)
+        }
         
         do {
             try await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))

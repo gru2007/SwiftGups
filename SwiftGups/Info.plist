@@ -21,9 +21,14 @@
 	<key>UIBackgroundModes</key>
 	<array>
 		<string>remote-notification</string>
+		<string>processing</string>
 	</array>
 	<key>NSSupportsLiveActivities</key>
 	<true/>
+	<key>BGTaskSchedulerPermittedIdentifiers</key>
+	<array>
+		<string>tech.artemev.swiftgups.liveactivity.refresh</string>
+	</array>
 	<key>APP_NEWS_FEED_URL</key>
 	<string>https://s3.twcstorage.ru/c8302457-monkey/app-news.json</string>
 </dict>
