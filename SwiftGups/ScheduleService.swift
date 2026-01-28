@@ -4,27 +4,67 @@ import Foundation
 @MainActor
 class ScheduleService: ObservableObject {
     
-    @Published var faculties: [Faculty] = Faculty.allFaculties
+    @Published var faculties: [Faculty] = []
+    @Published var facultiesMissingIDs: [String] = []
     @Published var selectedFaculty: Faculty?
     @Published var groups: [Group] = []
     @Published var selectedGroup: Group?
     @Published var currentSchedule: Schedule?
     @Published var selectedDate: Date = Date()
-    @Published var isLoading = false
+    
+    @Published var isLoadingFaculties = false
+    @Published var isLoadingGroups = false
+    @Published var isLoadingSchedule = false
+    
+    var isLoading: Bool { isLoadingFaculties || isLoadingGroups || isLoadingSchedule }
     @Published var errorMessage: String?
     
     private let apiClient: DVGUPSAPIClient
+    private var didLoadFaculties = false
     
     init() {
         self.apiClient = DVGUPSAPIClient()
-        // По умолчанию выбираем Институт управления, автоматизации и телекоммуникаций
-        self.selectedFaculty = faculties.first { $0.id == "2" }
     }
     
     init(apiClient: DVGUPSAPIClient) {
         self.apiClient = apiClient
-        // По умолчанию выбираем Институт управления, автоматизации и телекоммуникаций
-        self.selectedFaculty = faculties.first { $0.id == "2" }
+    }
+    
+    /// Гарантирует, что список институтов загружен хотя бы один раз
+    func ensureFacultiesLoaded() async {
+        guard !didLoadFaculties else { return }
+        await loadFaculties()
+    }
+    
+    /// Загружает список институтов/факультетов с сервера
+    func loadFaculties() async {
+        isLoadingFaculties = true
+        errorMessage = nil
+        
+        do {
+            let result = try await apiClient.fetchFaculties()
+            // Если API прислал пустой список факультетов — не подменяем статикой.
+            // Если API прислал только факультеты без ID — они будут показаны баннером в UI.
+            faculties = result.faculties
+            facultiesMissingIDs = result.missingIdNames
+            didLoadFaculties = true
+            
+            // Выбор дефолтного института (если ещё ничего не выбрано)
+            if selectedFaculty == nil {
+                selectedFaculty = faculties.first(where: { $0.id == "2" }) ?? faculties.first
+            } else if let selected = selectedFaculty {
+                // Если selectedFaculty пришел из старого/статического списка — обновим ссылку на объект из актуального массива
+                selectedFaculty = faculties.first(where: { $0.id == selected.id }) ?? selectedFaculty
+            }
+        } catch {
+            // По ТЗ: статический список больше не актуален — не используем его.
+            // Оставляем то, что уже было загружено ранее (если было), иначе — пустой список.
+            facultiesMissingIDs = []
+            didLoadFaculties = true
+            errorMessage = error.localizedDescription
+        }
+        
+        isLoadingFaculties = false
     }
     
     /// Загружает список групп для выбранного факультета
@@ -35,11 +75,11 @@ class ScheduleService: ObservableObject {
         }
         
         print("🔄 ScheduleService.loadGroups() started for faculty: \(faculty.id) (\(faculty.name))")
-        isLoading = true
+        isLoadingGroups = true
         errorMessage = nil
         
         do {
-            let fetchedGroups = try await apiClient.fetchGroups(for: faculty.id, date: selectedDate)
+            let fetchedGroups = try await apiClient.fetchGroups(for: faculty.id)
             print("✅ Successfully fetched \(fetchedGroups.count) groups for faculty \(faculty.id)")
             groups = fetchedGroups
             selectedGroup = nil // Сбрасываем выбранную группу
@@ -63,19 +103,18 @@ class ScheduleService: ObservableObject {
             groups = []
         }
         
-        isLoading = false
+        isLoadingGroups = false
         print("🏁 ScheduleService.loadGroups() finished. Groups count: \(groups.count)")
     }
     
     /// Загружает список групп для конкретного факультета
     func loadGroups(for facultyId: String, date: Date? = nil) async {
         print("🔄 ScheduleService.loadGroups(for: \(facultyId)) started")
-        isLoading = true
+        isLoadingGroups = true
         errorMessage = nil
         
         do {
-            let targetDate = date ?? selectedDate
-            let fetchedGroups = try await apiClient.fetchGroups(for: facultyId, date: targetDate)
+            let fetchedGroups = try await apiClient.fetchGroups(for: facultyId)
             print("✅ Successfully fetched \(fetchedGroups.count) groups for faculty \(facultyId)")
             groups = fetchedGroups
             selectedGroup = nil
@@ -90,7 +129,7 @@ class ScheduleService: ObservableObject {
             groups = []
         }
         
-        isLoading = false
+        isLoadingGroups = false
         print("🏁 ScheduleService.loadGroups(for: \(facultyId)) finished. Groups count: \(groups.count)")
     }
     
@@ -101,7 +140,7 @@ class ScheduleService: ObservableObject {
             return
         }
         
-        isLoading = true
+        isLoadingSchedule = true
         errorMessage = nil
         
         do {
@@ -116,12 +155,12 @@ class ScheduleService: ObservableObject {
             currentSchedule = nil
         }
         
-        isLoading = false
+        isLoadingSchedule = false
     }
     
     /// Загружает расписание для конкретной группы и даты
     func loadSchedule(for groupId: String, startDate: Date, endDate: Date? = nil) async {
-        isLoading = true
+        isLoadingSchedule = true
         errorMessage = nil
         
         do {
@@ -136,7 +175,7 @@ class ScheduleService: ObservableObject {
             currentSchedule = nil
         }
         
-        isLoading = false
+        isLoadingSchedule = false
     }
     
     /// Выбирает факультет и загружает его группы
@@ -216,7 +255,7 @@ class ScheduleService: ObservableObject {
             return
         }
         
-        isLoading = true
+        isLoadingSchedule = true
         errorMessage = nil
         print("📆 Loading week schedule for group: \(group.id) from \(DateFormatter.apiDateFormatter.string(from: startOfWeek)) to \(DateFormatter.apiDateFormatter.string(from: endOfWeek))")
         
@@ -234,7 +273,7 @@ class ScheduleService: ObservableObject {
             print("❌ Failed to load week schedule: \(error.localizedDescription)")
         }
         
-        isLoading = false
+        isLoadingSchedule = false
     }
     
     /// Переходит к предыдущей неделе
@@ -281,6 +320,12 @@ class ScheduleService: ObservableObject {
     
     /// Обновляет данные - загружает группы и расписание
     func refresh() async {
+        // Если институты ещё не загружены — начинаем с них
+        if !didLoadFaculties {
+            await loadFaculties()
+            return
+        }
+        
         // Если есть выбранная группа, перезагружаем её расписание
         if selectedGroup != nil {
             await loadWeekSchedule()

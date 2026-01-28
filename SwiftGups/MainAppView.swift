@@ -182,6 +182,7 @@ struct RegistrationView: View {
             }
         }
         .task {
+            await scheduleService.ensureFacultiesLoaded()
             if selectedFaculty != nil {
                 await scheduleService.loadGroups()
             }
@@ -377,17 +378,23 @@ struct FacultyPickerView: View {
             }
             
             Menu {
-                ForEach(Faculty.allFaculties) { faculty in
-                    Button(action: {
-                        selectedFaculty = faculty
-                        scheduleService.selectFaculty(faculty)
-                    }) {
-                        HStack {
-                            Text(faculty.name)
-                            if selectedFaculty?.id == faculty.id {
-                                Spacer()
-                                Image(systemName: "checkmark")
-                                    .foregroundColor(.blue)
+                if scheduleService.isLoadingFaculties {
+                    Text("Загрузка институтов...")
+                } else if scheduleService.faculties.isEmpty {
+                    Text("Нет доступных институтов")
+                } else {
+                    ForEach(scheduleService.faculties) { faculty in
+                        Button(action: {
+                            selectedFaculty = faculty
+                            scheduleService.selectFaculty(faculty)
+                        }) {
+                            HStack {
+                                Text(faculty.name)
+                                if selectedFaculty?.id == faculty.id {
+                                    Spacer()
+                                    Image(systemName: "checkmark")
+                                        .foregroundColor(.blue)
+                                }
                             }
                         }
                     }
@@ -413,6 +420,8 @@ struct FacultyPickerView: View {
                         .stroke(Color(.systemGray4), lineWidth: 1)
                 )
             }
+            
+            FacultyMissingIdBanner(missingNames: scheduleService.facultiesMissingIDs)
         }
     }
 }

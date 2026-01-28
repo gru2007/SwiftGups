@@ -1,0 +1,15 @@
+{
+  "originHash" : "f2f73bea4a61dad121b87d1e83b1a2ef7c368587120bef1a54a047d6fdad5df0",
+  "pins" : [
+    {
+      "identity" : "flex-dylib",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/gru2007/FLEX-dylib",
+      "state" : {
+        "branch" : "master",
+        "revision" : "9eb92adc4af9cec6788be893840a242ae79ec434"
+      }
+    }
+  ],
+  "version" : 3
+}

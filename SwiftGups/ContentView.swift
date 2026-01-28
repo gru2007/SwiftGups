@@ -86,7 +86,9 @@ struct ContentView: View {
 
         .task {
             // В standalone режиме подгружаем группы автоматически, встраиваемый режим (в табе) управляется снаружи
-            if showUserInfo, scheduleService.selectedFaculty != nil {
+            guard showUserInfo else { return }
+            await scheduleService.ensureFacultiesLoaded()
+            if scheduleService.selectedFaculty != nil {
                 await scheduleService.loadGroups()
             }
         }
@@ -132,22 +134,28 @@ struct FacultySelectionView: View {
                 .foregroundColor(.primary)
             
             Menu {
-                ForEach(scheduleService.faculties) { faculty in
-                    Button(action: {
-                        scheduleService.selectFaculty(faculty)
-                    }) {
-                        HStack {
-                            Text(faculty.name)
-                            if scheduleService.selectedFaculty?.id == faculty.id {
-                                Spacer()
-                                Image(systemName: "checkmark")
+                if scheduleService.isLoadingFaculties {
+                    Text("Загрузка институтов...")
+                } else if scheduleService.faculties.isEmpty {
+                    Text("Нет доступных институтов")
+                } else {
+                    ForEach(scheduleService.faculties) { faculty in
+                        Button(action: {
+                            scheduleService.selectFaculty(faculty)
+                        }) {
+                            HStack {
+                                Text(faculty.name)
+                                if scheduleService.selectedFaculty?.id == faculty.id {
+                                    Spacer()
+                                    Image(systemName: "checkmark")
+                                }
                             }
                         }
                     }
                 }
             } label: {
                 HStack {
-                    Text(scheduleService.selectedFaculty?.name ?? "Выберите институт/факультет")
+                    Text(scheduleService.selectedFaculty?.name ?? (scheduleService.isLoadingFaculties ? "Загрузка..." : "Выберите институт/факультет"))
                         .foregroundColor(scheduleService.selectedFaculty != nil ? .primary : .secondary)
                     
                     Spacer()
@@ -162,6 +170,8 @@ struct FacultySelectionView: View {
                         .stroke(Color(.systemGray4), lineWidth: 1)
                 )
             }
+            
+            FacultyMissingIdBanner(missingNames: scheduleService.facultiesMissingIDs)
         }
         .padding()
         .background(

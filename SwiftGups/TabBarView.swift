@@ -221,17 +221,23 @@ struct ScheduleTab: View {
         .onAppear {
             // Автоматически выбираем факультет и группу пользователя
             guard hasGroup else { return }
-            setupScheduleForUser()
+            Task { @MainActor in
+                await setupScheduleForUser()
+            }
         }
     }
     
-    private func setupScheduleForUser() {
+    private func setupScheduleForUser() async {
         guard hasGroup else {
             print("⚠️ У пользователя не выбрана группа, расписание не загружается")
             return
         }
 
-        guard let faculty = Faculty.allFaculties.first(where: { $0.id == currentUser.facultyId }) else {
+        await scheduleService.ensureFacultiesLoaded()
+        
+        guard let faculty =
+                scheduleService.faculties.first(where: { $0.id == currentUser.facultyId }) ??
+                Faculty.allFaculties.first(where: { $0.id == currentUser.facultyId }) else {
             print("❌ Faculty not found for user: \(currentUser.facultyId)")
             return
         }
@@ -245,23 +251,21 @@ struct ScheduleTab: View {
         scheduleService.groups = []
         
         // Загружаем группы и затем выбираем нужную
-        Task { @MainActor in
-            print("🔄 Loading groups for faculty: \(faculty.id)")
-            await scheduleService.loadGroups()
+        print("🔄 Loading groups for faculty: \(faculty.id)")
+        await scheduleService.loadGroups()
             
-            print("📋 Loaded \(scheduleService.groups.count) groups")
+        print("📋 Loaded \(scheduleService.groups.count) groups")
             
-            if let group = scheduleService.groups.first(where: { $0.id == currentUser.groupId }) {
-                print("✅ Found user's group: \(group.name)")
-                scheduleService.selectGroup(group)
-            } else {
-                print("⚠️ User's group not found in loaded groups. Available groups:")
-                for group in scheduleService.groups.prefix(5) {
-                    print("   - \(group.id): \(group.name)")
-                }
-                if let errorMessage = scheduleService.errorMessage {
-                    print("❌ Error loading groups: \(errorMessage)")
-                }
+        if let group = scheduleService.groups.first(where: { $0.id == currentUser.groupId }) {
+            print("✅ Found user's group: \(group.name)")
+            scheduleService.selectGroup(group)
+        } else {
+            print("⚠️ User's group not found in loaded groups. Available groups:")
+            for group in scheduleService.groups.prefix(5) {
+                print("   - \(group.id): \(group.name)")
+            }
+            if let errorMessage = scheduleService.errorMessage {
+                print("❌ Error loading groups: \(errorMessage)")
             }
         }
     }
@@ -2020,7 +2024,7 @@ struct EditProfileSheet: View {
     init(user: User) {
         self.user = user
         _name = State(initialValue: user.name)
-        _selectedFaculty = State(initialValue: Faculty.allFaculties.first { $0.id == user.facultyId })
+        _selectedFaculty = State(initialValue: nil)
     }
     
     var body: some View {
@@ -2035,12 +2039,17 @@ struct EditProfileSheet: View {
                         Text("Институт/Факультет")
                         Picker("Институт/Факультет", selection: $selectedFaculty) {
                             Text("Выберите факультет").tag(nil as Faculty?)
-                            ForEach(Faculty.allFaculties) { faculty in
+                            ForEach(scheduleService.faculties) { faculty in
                                 Text(faculty.name).tag(faculty as Faculty?)
                             }
                         }
                         .pickerStyle(.menu)
                         .labelsHidden()
+                        
+                        if !scheduleService.facultiesMissingIDs.isEmpty {
+                            FacultyMissingIdBanner(missingNames: scheduleService.facultiesMissingIDs)
+                                .padding(.top, 8)
+                        }
                     }
                 }
                 
@@ -2085,6 +2094,15 @@ struct EditProfileSheet: View {
             }
         }
         .task {
+            await scheduleService.ensureFacultiesLoaded()
+            
+            // Проставляем текущий факультет пользователя из динамического списка (или как fallback — из статического)
+            if selectedFaculty == nil {
+                selectedFaculty =
+                    scheduleService.faculties.first(where: { $0.id == user.facultyId }) ??
+                    Faculty.allFaculties.first(where: { $0.id == user.facultyId })
+            }
+            
             if let faculty = selectedFaculty {
                 scheduleService.selectFaculty(faculty)
                 await scheduleService.loadGroups()

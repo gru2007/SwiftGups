@@ -37,12 +37,10 @@ enum APIError: Error, LocalizedError {
 @MainActor
 class DVGUPSAPIClient: ObservableObject {
     
-    // MARK: - Константы
+    // MARK: - Константы (новый REST API)
     
-    private let baseURL = "https://dvgups.ru/index.php"
-    private let itemId = "1246"
-    private let option = "com_timetable"
-    private let view = "newtimetable"
+    private let primaryBaseURL = URL(string: "https://next.dvgups.ru/ext/")!
+    private let fallbackBaseURL = URL(string: "https://dvgups.ru/ext/")!
     
     private let session: URLSession
     
@@ -52,101 +50,307 @@ class DVGUPSAPIClient: ObservableObject {
         self.session = session
     }
     
-    // MARK: - Публичные методы
+    // MARK: - Публичные методы (REST)
     
-    /// Получает список групп для выбранного факультета
-    func fetchGroups(for facultyId: String, date: Date = Date()) async throws -> [Group] {
-        let dateString = DateFormatter.apiDateFormatter.string(from: date)
-        let requestBody = "FacID=\(facultyId)&GroupID=no&Time=\(dateString)"
+    struct FacultiesResult {
+        let faculties: [Faculty]
+        /// Названия институтов/факультетов, которые пришли без ID (их нельзя выбрать/использовать для запроса групп)
+        let missingIdNames: [String]
+    }
+    
+    /// Получает список институтов/факультетов (динамически)
+    func fetchFaculties() async throws -> FacultiesResult {
+        let response: APIEnvelope<[[String?]]> = try await request(
+            baseURL: primaryBaseURL,
+            path: "/api/v1/timetable/faculties",
+            queryItems: []
+        )
         
-        print("🌐 APIClient.fetchGroups() - Faculty: \(facultyId), Date: \(dateString)")
-        print("📤 Request body: \(requestBody)")
-        
-        let htmlResponse = try await performRequest(body: requestBody)
-        let groups = parseGroups(from: htmlResponse, facultyId: facultyId)
-        
-        print("🔍 Parsed \(groups.count) groups from response")
-        if groups.isEmpty {
-            print("⚠️ No groups found in HTML response for faculty \(facultyId)")
-            // Логируем часть HTML для отладки
-            let preview = String(htmlResponse.prefix(500))
-            print("📄 HTML preview: \(preview)")
+        // data: [[id?, name?], ...]
+        var faculties: [Faculty] = []
+        var missingIdNames: [String] = []
+        for row in response.data {
+            let rawId = row.count > 0 ? row[0] : nil
+            let name = row.count > 1 ? row[1] : nil
+            
+            guard let facultyName = name?.trimmingCharacters(in: .whitespacesAndNewlines),
+                  !facultyName.isEmpty else { continue }
+            
+            guard let id = rawId?.trimmingCharacters(in: .whitespacesAndNewlines),
+                  !id.isEmpty else {
+                // По ТЗ: не подставляем id из старого списка. Просто сообщаем в UI.
+                missingIdNames.append(facultyName)
+                continue
+            }
+            
+            faculties.append(Faculty(id: id, name: facultyName))
         }
         
-        return groups
+        // Убираем дубликаты по id, сортируем по названию
+        let unique = Dictionary(grouping: faculties, by: { $0.id })
+            .compactMap { $0.value.first }
+            .sorted { $0.name < $1.name }
+        
+        return FacultiesResult(
+            faculties: unique,
+            missingIdNames: Array(Set(missingIdNames)).sorted()
+        )
+    }
+    
+    /// Получает список групп для выбранного факультета/института
+    func fetchGroups(for facultyId: String) async throws -> [Group] {
+        struct GroupDTO: Decodable {
+            let id: String
+            let name: String
+            let field: String
+        }
+        
+        let response: APIEnvelope<[GroupDTO]> = try await request(
+            baseURL: primaryBaseURL,
+            path: "/api/v1/timetable/groups/by-faculty",
+            queryItems: [
+                URLQueryItem(name: "facultyId", value: facultyId)
+            ]
+        )
+        
+        return response.data
+            .map { Group(id: $0.id, name: $0.name, fullName: $0.field, facultyId: facultyId) }
+            .sorted { $0.name < $1.name }
     }
     
     /// Получает расписание для конкретной группы
     func fetchSchedule(for groupId: String, startDate: Date = Date(), endDate: Date? = nil) async throws -> Schedule {
-        let dateString = DateFormatter.apiDateFormatter.string(from: startDate)
-        let requestBody = "GroupID=\(groupId)&Time=\(dateString)"
+        let daysCount = Self.computeDaysCount(startDate: startDate, endDate: endDate)
+        let startDateString = DateFormatter.serverDateFormatter.string(from: startDate)
         
-        let htmlResponse = try await performRequest(body: requestBody)
-        return try parseSchedule(from: htmlResponse, groupId: groupId, startDate: startDate, endDate: endDate)
+        struct ScheduleItemDTO: Decodable {
+            let startTime: String
+            let endTime: String
+            let date: String
+            let lessonData: LessonDataDTO
+            
+            struct LessonDataDTO: Decodable {
+                let courseType: CourseTypeDTO
+                let courseSubject: CourseSubjectDTO
+                let teacherList: [TeacherDTO]
+                let studentList: [StudentDTO]
+                let studyPlace: StudyPlaceDTO?
+                
+                struct CourseTypeDTO: Decodable { let name: String; let nameAbbr: String?
+                    enum CodingKeys: String, CodingKey { case name; case nameAbbr = "name_abbr" }
+                }
+                struct CourseSubjectDTO: Decodable { let name: String; let nameAbbr: String?
+                    enum CodingKeys: String, CodingKey { case name; case nameAbbr = "name_abbr" }
+                }
+                struct TeacherDTO: Decodable { let name: String; let nameAbbr: String?
+                    enum CodingKeys: String, CodingKey { case name; case nameAbbr = "name_abbr" }
+                }
+                struct StudentDTO: Decodable {
+                    let name: String?
+                    let nameAbbr: String?
+                    let studentGroupName: String?
+                    let studentGroupNameAbbr: String?
+                    let facultyName: String?
+                    let facultyNameAbbr: String?
+                    
+                    enum CodingKeys: String, CodingKey {
+                        case name
+                        case nameAbbr = "name_abbr"
+                        case studentGroupName = "student_group_name"
+                        case studentGroupNameAbbr = "student_group_name_abbr"
+                        case facultyName = "faculty_name"
+                        case facultyNameAbbr = "faculty_name_abbr"
+                    }
+                }
+                struct StudyPlaceDTO: Decodable {
+                    let name: String
+                    let ownerName: String?
+                    enum CodingKeys: String, CodingKey { case name; case ownerName = "owner_name" }
+                }
+                
+                enum CodingKeys: String, CodingKey {
+                    case courseType = "course_type"
+                    case courseSubject = "course_subject"
+                    case teacherList = "teacher_list"
+                    case studentList = "student_list"
+                    case studyPlace = "study_place"
+                }
+            }
+            
+            enum CodingKeys: String, CodingKey {
+                case startTime = "start_time"
+                case endTime = "end_time"
+                case date
+                case lessonData = "lesson_data"
+            }
+        }
+        
+        let response: APIEnvelope<[ScheduleItemDTO]> = try await request(
+            baseURL: primaryBaseURL,
+            path: "/api/v1/timetable/schedule",
+            queryItems: [
+                URLQueryItem(name: "scheduleType", value: "gr"),
+                URLQueryItem(name: "parameter", value: groupId),
+                URLQueryItem(name: "days", value: String(daysCount)),
+                URLQueryItem(name: "startDate", value: startDateString)
+            ]
+        )
+        
+        // Группируем по дате
+        var lessonsByDate: [Date: [Lesson]] = [:]
+        var resolvedGroupName: String? = nil
+        
+        for item in response.data {
+            guard let lessonDate = DateFormatter.serverDateFormatter.date(from: item.date) else {
+                continue
+            }
+            
+            // Пытаемся вытащить имя группы из student_list
+            if resolvedGroupName == nil {
+                resolvedGroupName =
+                    item.lessonData.studentList.first?.studentGroupNameAbbr ??
+                    item.lessonData.studentList.first?.studentGroupName ??
+                    item.lessonData.studentList.first?.nameAbbr ??
+                    item.lessonData.studentList.first?.name
+            }
+            
+            let timeStartHHmm = Self.hhmm(fromHHmmss: item.startTime)
+            let timeEndHHmm = Self.hhmm(fromHHmmss: item.endTime)
+            
+            let pairNumber = Self.pairNumber(forStartTime: timeStartHHmm)
+            
+            let lessonType = LessonType(from: item.lessonData.courseType.name)
+            let subject = item.lessonData.courseSubject.name
+            
+            let room = Self.composeRoom(
+                name: item.lessonData.studyPlace?.name,
+                ownerName: item.lessonData.studyPlace?.ownerName
+            )
+            
+            let teacherName = item.lessonData.teacherList.first?.nameAbbr ?? item.lessonData.teacherList.first?.name
+            let teacher: Teacher? = (teacherName?.isEmpty == false) ? Teacher(name: teacherName!) : nil
+            
+            let groups = item.lessonData.studentList.compactMap { $0.studentGroupNameAbbr ?? $0.studentGroupName ?? $0.nameAbbr }
+                .filter { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+            
+            let lesson = Lesson(
+                pairNumber: pairNumber,
+                timeStart: timeStartHHmm,
+                timeEnd: timeEndHHmm,
+                type: lessonType,
+                subject: subject,
+                room: room,
+                teacher: teacher,
+                groups: groups,
+                onlineLink: nil
+            )
+            
+            lessonsByDate[lessonDate, default: []].append(lesson)
+        }
+        
+        let days: [ScheduleDay] = lessonsByDate
+            .map { (date, lessons) in
+                let weekday = DateFormatter.weekdayRuFormatter.string(from: date).capitalized
+                return ScheduleDay(
+                    date: date,
+                    weekday: weekday,
+                    weekNumber: nil,
+                    isEvenWeek: nil,
+                    lessons: lessons.sorted { lhs, rhs in
+                        if lhs.pairNumber != rhs.pairNumber { return lhs.pairNumber < rhs.pairNumber }
+                        return lhs.timeStart < rhs.timeStart
+                    }
+                )
+            }
+            .sorted { $0.date < $1.date }
+        
+        return Schedule(
+            groupId: groupId,
+            groupName: resolvedGroupName ?? "Группа \(groupId)",
+            startDate: startDate,
+            endDate: endDate,
+            days: days
+        )
     }
     
-    /// Получает расписание по аудиториям для выбранной даты
+    /// Старые методы (HTML) удалены: новый API работает только через REST.
     func fetchScheduleByAuditorium(date: Date = Date()) async throws -> [ScheduleDay] {
-        let dateString = DateFormatter.apiDateFormatter.string(from: date)
-        let requestBody = "AudID=no&Time=\(dateString)"
-        
-        let htmlResponse = try await performRequest(body: requestBody)
-        return parseScheduleDays(from: htmlResponse)
+        throw APIError.parseError("Метод не поддерживается новым API")
     }
     
-    /// Получает расписание по преподавателям для выбранной даты
     func fetchScheduleByTeacher(date: Date = Date()) async throws -> [ScheduleDay] {
-        let dateString = DateFormatter.apiDateFormatter.string(from: date)
-        let requestBody = "PrepID=no&Time=\(dateString)"
-        
-        let htmlResponse = try await performRequest(body: requestBody)
-        return parseScheduleDays(from: htmlResponse)
+        throw APIError.parseError("Метод не поддерживается новым API")
     }
     
-    // MARK: - Приватные методы
+    // MARK: - HTTP / JSON
     
-    /// Создает базовый URL для API запросов
-    private func createBaseURL() -> URL? {
-        var components = URLComponents(string: baseURL)
-        components?.queryItems = [
-            URLQueryItem(name: "Itemid", value: itemId),
-            URLQueryItem(name: "option", value: option),
-            URLQueryItem(name: "view", value: view)
-        ]
-        return components?.url
+    private struct APIEnvelope<T: Decodable>: Decodable {
+        let status: String?
+        let data: T
     }
     
-    /// Выполняет HTTP POST запрос к API
-    private func performRequest(body: String) async throws -> String {
-        guard let url = createBaseURL() else {
+    private func request<T: Decodable>(
+        baseURL: URL,
+        path: String,
+        queryItems: [URLQueryItem]
+    ) async throws -> T {
+        // Пробуем primary, при нужных ошибках — fallback.
+        do {
+            return try await performRequest(baseURL: baseURL, path: path, queryItems: queryItems)
+        } catch {
+            guard shouldFallback(from: error) else { throw error }
+            return try await performRequest(baseURL: fallbackBaseURL, path: path, queryItems: queryItems)
+        }
+    }
+    
+    private func performRequest<T: Decodable>(
+        baseURL: URL,
+        path: String,
+        queryItems: [URLQueryItem]
+    ) async throws -> T {
+        guard var components = URLComponents(url: baseURL, resolvingAgainstBaseURL: false) else {
             throw APIError.invalidURL
         }
         
+        components.queryItems = [
+            URLQueryItem(name: "api", value: "1"),
+            URLQueryItem(name: "path", value: path)
+        ] + queryItems
+        
+        guard let url = components.url else { throw APIError.invalidURL }
+        
         var request = URLRequest(url: url)
-        request.httpMethod = "POST"
-        request.setValue("application/x-www-form-urlencoded; charset=UTF-8", forHTTPHeaderField: "Content-Type")
-        request.setValue("XMLHttpRequest", forHTTPHeaderField: "X-Requested-With")
-        request.httpBody = body.data(using: .utf8)
+        request.httpMethod = "GET"
+        request.setValue("application/json", forHTTPHeaderField: "Accept")
         request.timeoutInterval = 20
         
         do {
             let (data, response) = try await session.data(for: request)
             
-            guard let httpResponse = response as? HTTPURLResponse,
-                  httpResponse.statusCode == 200 else {
+            guard let httpResponse = response as? HTTPURLResponse else {
                 throw APIError.invalidResponse
             }
             
-            guard let htmlString = String(data: data, encoding: .utf8) else {
-                throw APIError.noData
+            // Если next отвечает 5xx — попробуем fallback
+            if (500...599).contains(httpResponse.statusCode), baseURL == primaryBaseURL {
+                throw APIError.invalidResponse
             }
             
-            return htmlString
+            guard (200...299).contains(httpResponse.statusCode) else {
+                throw APIError.invalidResponse
+            }
+            
+            do {
+                return try JSONDecoder().decode(T.self, from: data)
+            } catch {
+                let preview = String(data: data, encoding: .utf8) ?? ""
+                throw APIError.parseError("\(error.localizedDescription). Response preview: \(preview.prefix(300))")
+            }
         } catch {
             if let urlError = error as? URLError {
                 switch urlError.code {
                 case .timedOut, .cannotConnectToHost, .networkConnectionLost, .cannotFindHost, .dnsLookupFailed, .internationalRoamingOff:
-                    // Часто возникает при активном VPN/блокировке
+                    // Часто возникает при активном VPN/блокировке/недоступности next
                     throw APIError.vpnOrBlockedNetwork
                 default:
                     break
@@ -156,517 +360,88 @@ class DVGUPSAPIClient: ObservableObject {
         }
     }
     
-    // MARK: - Парсинг HTML
+    private func shouldFallback(from error: Error) -> Bool {
+        // Если проблема именно в недоступности next, идём на обычный домен.
+        // vpnOrBlockedNetwork может быть и для обычного домена, но по ТЗ fallback нужен именно когда next недоступен.
+        if let apiError = error as? APIError {
+            switch apiError {
+            case .vpnOrBlockedNetwork:
+                return true
+            case .invalidResponse:
+                return true
+            default:
+                return false
+            }
+        }
+        if let urlError = error as? URLError {
+            switch urlError.code {
+            case .timedOut, .cannotConnectToHost, .networkConnectionLost, .cannotFindHost, .dnsLookupFailed:
+                return true
+            default:
+                return false
+            }
+        }
+        return false
+    }
     
-    /// Парсит список групп из HTML ответа
-    private func parseGroups(from html: String, facultyId: String) -> [Group] {
-        var groups: [Group] = []
+    // MARK: - Helpers
+    
+    private static func computeDaysCount(startDate: Date, endDate: Date?) -> Int {
+        guard let endDate else { return 7 }
+        let calendar = Calendar.current
+        let start = calendar.startOfDay(for: startDate)
+        let end = calendar.startOfDay(for: endDate)
+        let components = calendar.dateComponents([.day], from: start, to: end)
+        let diff = (components.day ?? 0)
+        // В API параметр days обычно включает startDate как "день 1"
+        return max(1, diff + 1)
+    }
+    
+    private static func hhmm(fromHHmmss value: String) -> String {
+        // "16:55:00" -> "16:55"
+        if value.count >= 5 {
+            return String(value.prefix(5))
+        }
+        return value
+    }
+    
+    private static func pairNumber(forStartTime hhmm: String) -> Int {
+        func parse(_ s: String) -> (Int, Int)? {
+            let parts = s.split(separator: ":")
+            guard parts.count >= 2,
+                  let h = Int(parts[0]),
+                  let m = Int(parts[1]) else { return nil }
+            return (h, m)
+        }
         
-        // Ищем все option теги с группами
-        let optionPattern = #"<option value='(\d+)'>гр\.\s*([^-]+)\s*-\s*([^<]+)</option>"#
-        let regex = try? NSRegularExpression(pattern: optionPattern, options: [])
-        let nsString = html as NSString
-        let results = regex?.matches(in: html, options: [], range: NSRange(location: 0, length: nsString.length)) ?? []
+        guard let target = parse(hhmm) else { return 0 }
         
-        print("🔍 Found \(results.count) regex matches for groups pattern")
+        for t in LessonTime.schedule {
+            if let start = parse(t.startTime), start == target {
+                return t.number
+            }
+        }
         
-        if results.isEmpty {
-            // Попробуем найти любые option теги для отладки
-            let anyOptionPattern = #"<option[^>]*>(.*?)</option>"#
-            let debugRegex = try? NSRegularExpression(pattern: anyOptionPattern, options: [])
-            let debugResults = debugRegex?.matches(in: html, options: [], range: NSRange(location: 0, length: nsString.length)) ?? []
-            print("🐛 Found \(debugResults.count) total option tags in response")
-            
-            // Показываем первые несколько option тегов для отладки
-            for (index, match) in debugResults.prefix(5).enumerated() {
-                if match.numberOfRanges > 0 {
-                    let matchRange = match.range(at: 0)
-                    let matchText = nsString.substring(with: matchRange)
-                    print("🐛 Option \(index + 1): \(matchText)")
+        // Фолбек: "08:05" vs "8:05" и наоборот
+        if hhmm.hasPrefix("0"), let alt = parse(String(hhmm.dropFirst())) {
+            for t in LessonTime.schedule {
+                if let start = parse(t.startTime), start == alt {
+                    return t.number
                 }
             }
         }
         
-        for result in results {
-            guard result.numberOfRanges == 4 else { continue }
-            
-            let groupIdRange = result.range(at: 1)
-            let groupNameRange = result.range(at: 2)
-            let fullNameRange = result.range(at: 3)
-            
-            guard groupIdRange.location != NSNotFound,
-                  groupNameRange.location != NSNotFound,
-                  fullNameRange.location != NSNotFound else { continue }
-            
-            let groupId = nsString.substring(with: groupIdRange)
-            let groupName = nsString.substring(with: groupNameRange).trimmingCharacters(in: .whitespacesAndNewlines)
-            let fullName = nsString.substring(with: fullNameRange).trimmingCharacters(in: .whitespacesAndNewlines)
-            
-            let group = Group(id: groupId, name: groupName, fullName: fullName, facultyId: facultyId)
-            groups.append(group)
-            print("✅ Parsed group: \(groupName) (ID: \(groupId))")
-        }
-        
-        return groups.sorted { $0.name < $1.name }
+        return 0
     }
     
-    /// Парсит расписание из HTML ответа
-    private func parseSchedule(from html: String, groupId: String, startDate: Date, endDate: Date?) throws -> Schedule {
-        let days = parseScheduleDays(from: html)
-        
-        // Получаем название группы из HTML (если возможно)
-        let groupName = extractGroupName(from: html) ?? "Группа \(groupId)"
-        
-        return Schedule(
-            groupId: groupId,
-            groupName: groupName,
-            startDate: startDate,
-            endDate: endDate,
-            days: days
-        )
-    }
-    
-    /// Парсит дни расписания из HTML ответа
-    private func parseScheduleDays(from html: String) -> [ScheduleDay] {
-        var days: [ScheduleDay] = []
-        
-        // Парсим заголовки дней (например: "01.09.2025 Понедельник (2-я неделя)")
-        let dayHeaderPattern = #"<h3>(\d{2}\.\d{2}\.\d{4})\s+([А-Я][а-я]+)\s+\((\d+)-я неделя\)</h3>"#
-        let dayRegex = try? NSRegularExpression(pattern: dayHeaderPattern, options: [])
-        
-        // Парсим таблицы с занятиями
-        let tablePattern = #"<h3>.*?</h3><table.*?>(.*?)</table>"#
-        let tableRegex = try? NSRegularExpression(pattern: tablePattern, options: [.dotMatchesLineSeparators])
-        
-        let nsString = html as NSString
-        let dayMatches = dayRegex?.matches(in: html, options: [], range: NSRange(location: 0, length: nsString.length)) ?? []
-        let tableMatches = tableRegex?.matches(in: html, options: [], range: NSRange(location: 0, length: nsString.length)) ?? []
-        
-        guard dayMatches.count == tableMatches.count else {
-            return days
+    private static func composeRoom(name: String?, ownerName: String?) -> String? {
+        guard let name else { return nil }
+        let trimmedName = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        let owner = ownerName?.trimmingCharacters(in: .whitespacesAndNewlines)
+        if let owner, !owner.isEmpty {
+            return "\(trimmedName) • \(owner)"
         }
-        
-        for (index, dayMatch) in dayMatches.enumerated() {
-            guard dayMatch.numberOfRanges == 4,
-                  index < tableMatches.count else { continue }
-            
-            let dateRange = dayMatch.range(at: 1)
-            let weekdayRange = dayMatch.range(at: 2)
-            let weekNumberRange = dayMatch.range(at: 3)
-            let tableContentRange = tableMatches[index].range(at: 1)
-            
-            guard dateRange.location != NSNotFound,
-                  weekdayRange.location != NSNotFound,
-                  weekNumberRange.location != NSNotFound,
-                  tableContentRange.location != NSNotFound else { continue }
-            
-            let dateString = nsString.substring(with: dateRange)
-            let weekdayString = nsString.substring(with: weekdayRange)
-            let weekNumberString = nsString.substring(with: weekNumberRange)
-            let tableContent = nsString.substring(with: tableContentRange)
-            
-            guard let date = DateFormatter.apiDateFormatter.date(from: dateString),
-                  let weekNumber = Int(weekNumberString) else { continue }
-            
-            let lessons = parseLessons(from: tableContent)
-            let isEvenWeek = weekNumber % 2 == 0
-            
-            let scheduleDay = ScheduleDay(
-                date: date,
-                weekday: weekdayString,
-                weekNumber: weekNumber,
-                isEvenWeek: isEvenWeek,
-                lessons: lessons
-            )
-            
-            days.append(scheduleDay)
-        }
-        
-        return days.sorted { $0.date < $1.date }
-    }
-    
-    /// Парсит занятия из HTML таблицы
-    private func parseLessons(from tableHtml: String) -> [Lesson] {
-        var lessons: [Lesson] = []
-        
-        // Упрощенный паттерн для парсинга строк таблицы
-        let rowPattern = #"<tr[^>]*>(.*?)</tr>"#
-        let rowRegex = try? NSRegularExpression(pattern: rowPattern, options: [.dotMatchesLineSeparators])
-        let nsString = tableHtml as NSString
-        let rowResults = rowRegex?.matches(in: tableHtml, options: [], range: NSRange(location: 0, length: nsString.length)) ?? []
-        
-        for rowResult in rowResults {
-            let rowContent = nsString.substring(with: rowResult.range(at: 1))
-            
-            // Парсим отдельные компоненты урока
-            if let lesson = parseIndividualLesson(from: rowContent) {
-                lessons.append(lesson)
-            }
-        }
-        
-        return lessons.sorted { $0.pairNumber < $1.pairNumber }
-    }
-    
-    /// Парсит отдельный урок из HTML строки таблицы
-    private func parseIndividualLesson(from rowContent: String) -> Lesson? {
-        // Парсим номер пары
-        let pairNumberPattern = #"<b[^>]*>\s*(\d+)-я пара\s*</b>"#
-        let pairNumberRegex = try? NSRegularExpression(pattern: pairNumberPattern)
-        let pairNumberMatch = pairNumberRegex?.firstMatch(in: rowContent, range: NSRange(location: 0, length: rowContent.count))
-        
-        guard let pairMatch = pairNumberMatch,
-              let pairRange = Range(pairMatch.range(at: 1), in: rowContent) else {
-            return nil
-        }
-        
-        let pairNumber = Int(String(rowContent[pairRange])) ?? 0
-        
-        // Парсим время
-        let timePattern = #"(\d{2}:\d{2}-\d{2}:\d{2})"#
-        let timeRegex = try? NSRegularExpression(pattern: timePattern)
-        let timeMatch = timeRegex?.firstMatch(in: rowContent, range: NSRange(location: 0, length: rowContent.count))
-        
-        guard let timeMatchResult = timeMatch,
-              let timeRange = Range(timeMatchResult.range(at: 1), in: rowContent) else {
-            return nil
-        }
-        
-        let timeString = String(rowContent[timeRange])
-        let timeComponents = timeString.split(separator: "-")
-        guard timeComponents.count == 2 else { return nil }
-        
-        // Парсим предмет и тип занятия
-        let subjectPattern = #"<div>\(([^)]+)\)\s*([^<]+)</div>"#
-        let subjectRegex = try? NSRegularExpression(pattern: subjectPattern)
-        let subjectMatch = subjectRegex?.firstMatch(in: rowContent, range: NSRange(location: 0, length: rowContent.count))
-        
-        var lessonType = LessonType.lecture
-        var subject = ""
-        
-        if let subjectMatchResult = subjectMatch,
-           let typeRange = Range(subjectMatchResult.range(at: 1), in: rowContent),
-           let subjRange = Range(subjectMatchResult.range(at: 2), in: rowContent) {
-            lessonType = LessonType(from: String(rowContent[typeRange]))
-            subject = String(rowContent[subjRange]).trimmingCharacters(in: .whitespacesAndNewlines)
-        }
-        
-        // Парсим онлайн информацию с сокращением ссылок
-        var onlineInfo = extractOnlineInfo(from: rowContent)
-        
-        // Парсим аудиторию - ищем в td с wrap
-        let auditoriumPattern = #"<td[^>]*wrap[^>]*>([^<]*)</td>"#
-        let auditoriumRegex = try? NSRegularExpression(pattern: auditoriumPattern)
-        let auditoriumMatch = auditoriumRegex?.firstMatch(in: rowContent, range: NSRange(location: 0, length: rowContent.count))
-        
-        var auditorium: String? = nil
-        if let auditoriumMatchResult = auditoriumMatch,
-           let audRange = Range(auditoriumMatchResult.range(at: 1), in: rowContent) {
-            let aud = String(rowContent[audRange]).trimmingCharacters(in: .whitespacesAndNewlines)
-            if !aud.isEmpty && aud != " " {
-                auditorium = aud
-            }
-        }
-        
-        // Парсим группы на паре
-        let groups = extractGroupsFromLesson(from: rowContent)
-        
-        // Парсим преподавателя
-        let teacher = extractTeacherInfo(from: rowContent)
-        
-        return Lesson(
-            pairNumber: pairNumber,
-            timeStart: String(timeComponents[0]),
-            timeEnd: String(timeComponents[1]),
-            type: lessonType,
-            subject: subject,
-            room: auditorium,
-            teacher: teacher,
-            groups: groups,
-            onlineLink: onlineInfo
-        )
-    }
-    
-    /// Извлекает и сокращает информацию об онлайн занятиях
-    private func extractOnlineInfo(from rowContent: String) -> String? {
-        // Поиск различных типов онлайн ссылок
-        var onlineInfo: String? = nil
-        
-        // ZOOM ссылки
-        if let zoomInfo = extractZoomInfo(from: rowContent) {
-            onlineInfo = zoomInfo
-        }
-        // Discord ссылки
-        else if let discordInfo = extractDiscordInfo(from: rowContent) {
-            onlineInfo = discordInfo
-        }
-        // FreeConferenceCall ссылки
-        else if let freeConfInfo = extractFreeConferenceCallInfo(from: rowContent) {
-            onlineInfo = freeConfInfo
-        }
-        // Контакты преподавателей или другие ссылки
-        else if let otherInfo = extractOtherOnlineInfo(from: rowContent) {
-            onlineInfo = otherInfo
-        }
-        
-        return onlineInfo
-    }
-    
-    /// Извлекает информацию о ZOOM
-    private func extractZoomInfo(from html: String) -> String? {
-        // Ищем паттерн ZOOM с ID и кодом доступа
-        let zoomPattern1 = #"ZOOM:\s*(\d{3}-\d{3}-\d{4})\s*код доступа:\s*(\w+)"#
-        if let regex = try? NSRegularExpression(pattern: zoomPattern1),
-           let match = regex.firstMatch(in: html, range: NSRange(location: 0, length: html.count)),
-           match.numberOfRanges >= 3 {
-            let nsString = html as NSString
-            let meetingId = nsString.substring(with: match.range(at: 1))
-            let passcode = nsString.substring(with: match.range(at: 2))
-            return "ZOOM: \(meetingId), код: \(passcode)"
-        }
-        
-        // Ищем полный ZOOM URL
-        let zoomPattern2 = #"https://us\d{2}web\.zoom\.us/j/(\d+)\?pwd=([^\s]+)"#
-        if let regex = try? NSRegularExpression(pattern: zoomPattern2),
-           let match = regex.firstMatch(in: html, range: NSRange(location: 0, length: html.count)),
-           match.numberOfRanges >= 2 {
-            let nsString = html as NSString
-            let meetingId = nsString.substring(with: match.range(at: 1))
-            // Ищем код доступа в тексте
-            let passcodePattern = #"Код доступа:\s*(\w+)"#
-            if let passcodeRegex = try? NSRegularExpression(pattern: passcodePattern),
-               let passcodeMatch = passcodeRegex.firstMatch(in: html, range: NSRange(location: 0, length: html.count)) {
-                let passcode = nsString.substring(with: passcodeMatch.range(at: 1))
-                return "ZOOM: \(meetingId), код: \(passcode)"
-            } else {
-                return "ZOOM: \(meetingId)"
-            }
-        }
-        
-        // Общий поиск любой ZOOM информации
-        let generalZoomPattern = #"<div>([^<]*ZOOM[^<]*)</div>"#
-        if let regex = try? NSRegularExpression(pattern: generalZoomPattern, options: [.caseInsensitive]),
-           let match = regex.firstMatch(in: html, range: NSRange(location: 0, length: html.count)) {
-            let nsString = html as NSString
-            let zoomText = nsString.substring(with: match.range(at: 1))
-                .trimmingCharacters(in: .whitespacesAndNewlines)
-                .replacingOccurrences(of: "\n", with: " ")
-            if zoomText.count > 80 {
-                // Если текст слишком длинный, сокращаем
-                return "ZOOM: есть ссылка"
-            }
-            return zoomText.isEmpty ? nil : zoomText
-        }
-        
-        return nil
-    }
-    
-    /// Извлекает информацию о Discord
-    private func extractDiscordInfo(from html: String) -> String? {
-        let discordPattern = #"Discord:\s*https://discord\.gg/(\w+)"#
-        if let regex = try? NSRegularExpression(pattern: discordPattern),
-           let match = regex.firstMatch(in: html, range: NSRange(location: 0, length: html.count)) {
-            let nsString = html as NSString
-            let inviteCode = nsString.substring(with: match.range(at: 1))
-            return "Discord: \(inviteCode)"
-        }
-        
-        // Общий поиск Discord информации
-        let generalDiscordPattern = #"<div>([^<]*Discord[^<]*)</div>"#
-        if let regex = try? NSRegularExpression(pattern: generalDiscordPattern, options: [.caseInsensitive]),
-           let match = regex.firstMatch(in: html, range: NSRange(location: 0, length: html.count)) {
-            let nsString = html as NSString
-            let discordText = nsString.substring(with: match.range(at: 1))
-                .trimmingCharacters(in: .whitespacesAndNewlines)
-                .replacingOccurrences(of: "\n", with: " ")
-            return discordText.isEmpty ? nil : "Discord: есть ссылка"
-        }
-        
-        return nil
-    }
-    
-    /// Извлекает информацию о FreeConferenceCall
-    private func extractFreeConferenceCallInfo(from html: String) -> String? {
-        let freeConfPattern = #"FreeConferenceCall:[^>]*>([^<]+)<"#
-        if let regex = try? NSRegularExpression(pattern: freeConfPattern),
-           let match = regex.firstMatch(in: html, range: NSRange(location: 0, length: html.count)) {
-            let nsString = html as NSString
-            let roomName = nsString.substring(with: match.range(at: 1))
-                .trimmingCharacters(in: .whitespacesAndNewlines)
-            return "FreeConference: \(roomName)"
-        }
-        
-        // Общий поиск FreeConferenceCall
-        let generalPattern = #"<div>([^<]*FreeConferenceCall[^<]*)</div>"#
-        if let regex = try? NSRegularExpression(pattern: generalPattern, options: [.caseInsensitive]),
-           let match = regex.firstMatch(in: html, range: NSRange(location: 0, length: html.count)) {
-            return "FreeConference: есть ссылка"
-        }
-        
-        return nil
-    }
-    
-    /// Извлекает другую онлайн информацию
-    private func extractOtherOnlineInfo(from html: String) -> String? {
-        // Контакты преподавателей
-        if html.contains("Контакты преподавателей") {
-            return "См. контакты преподавателей"
-        }
-        
-        // Общий поиск ссылок в div-ах
-        let linkPattern = #"<div><a[^>]*href='([^']+)'[^>]*>([^<]+)</a></div>"#
-        if let regex = try? NSRegularExpression(pattern: linkPattern),
-           let match = regex.firstMatch(in: html, range: NSRange(location: 0, length: html.count)) {
-            let nsString = html as NSString
-            let linkText = nsString.substring(with: match.range(at: 2))
-                .trimmingCharacters(in: .whitespacesAndNewlines)
-            return linkText.isEmpty ? "Есть ссылка" : linkText
-        }
-        
-        return nil
-    }
-    
-    /// Извлекает список групп на паре
-    private func extractGroupsFromLesson(from rowContent: String) -> [String] {
-        // Ищем группы в четвертом столбце (col-sm-2 без wrap)
-        let groupsPattern = #"<td class='col-sm-2'\s*>([^<]*)</td>"#
-        let groupsRegex = try? NSRegularExpression(pattern: groupsPattern)
-        let groupsMatches = groupsRegex?.matches(in: rowContent, options: [], range: NSRange(location: 0, length: rowContent.count)) ?? []
-        
-        for match in groupsMatches {
-            if match.numberOfRanges > 1 {
-                let nsString = rowContent as NSString
-                let groupsText = nsString.substring(with: match.range(at: 1))
-                    .trimmingCharacters(in: .whitespacesAndNewlines)
-                
-                // Проверяем, что это действительно группы (содержат характерные сокращения)
-                if !groupsText.isEmpty && (groupsText.contains("БО2") || groupsText.contains("СО2") || groupsText.contains("МО2")) {
-                    // Разделяем группы по запятым и очищаем
-                    return groupsText.components(separatedBy: ", ")
-                        .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
-                        .filter { !$0.isEmpty }
-                }
-            }
-        }
-        
-        return []
-    }
-    
-    /// Извлекает информацию о преподавателе
-    private func extractTeacherInfo(from rowContent: String) -> Teacher? {
-        let teacherPattern = #"<div>([^<]+?)(?:\s*<a[^>]*href='mailto:([^']+)'[^>]*>&#9993;</a>)?</div>"#
-        let teacherRegex = try? NSRegularExpression(pattern: teacherPattern)
-        
-        let teacherMatches = teacherRegex?.matches(in: rowContent, options: [], range: NSRange(location: 0, length: rowContent.count)) ?? []
-        
-        // Берем последний матч - обычно это преподаватель
-        if let lastTeacherMatch = teacherMatches.last,
-           let nameRange = Range(lastTeacherMatch.range(at: 1), in: rowContent) {
-            let teacherName = String(rowContent[nameRange]).trimmingCharacters(in: .whitespacesAndNewlines)
-            
-            // Проверяем что это не пустое поле и не другие данные
-            if !teacherName.isEmpty && 
-               teacherName != " " && 
-               !teacherName.contains("wrap") &&
-               !teacherName.contains("БО2") && // исключаем названия групп
-               !teacherName.contains("СО2") &&
-               !teacherName.contains("МО2") &&
-               !teacherName.contains("а. ") && // исключаем аудитории
-               !teacherName.contains("Спортивный") { // исключаем места проведения
-                
-                var teacherEmail: String? = nil
-                if lastTeacherMatch.numberOfRanges > 2,
-                   let emailRange = Range(lastTeacherMatch.range(at: 2), in: rowContent) {
-                    let email = String(rowContent[emailRange]).trimmingCharacters(in: .whitespacesAndNewlines)
-                    if !email.isEmpty {
-                        teacherEmail = email
-                    }
-                }
-                
-                return Teacher(name: teacherName, email: teacherEmail)
-            }
-        }
-        
-        return nil
-    }
-    
-    // Оригинальная функция как fallback
-    private func parseLessonsOriginal(from tableHtml: String) -> [Lesson] {
-        var lessons: [Lesson] = []
-        
-        // Паттерн для парсинга строк таблицы с занятиями
-        let lessonPattern = #"<tr[^>]*>.*?<b[^>]*>\s*(\d+)-я пара\s*</b>.*?(\d{2}:\d{2}-\d{2}:\d{2}).*?<div>\(([^)]+)\)\s*([^<]+)</div>.*?<div>([^<]*)</div>.*?wrap>([^<]*)</td>.*?>([^<]*)</td>.*?<div>([^<]*?)(?:<a[^>]*href='mailto:([^']*)'[^>]*>&#9993;</a>)?</div>"#
-        
-        let regex = try? NSRegularExpression(pattern: lessonPattern, options: [.dotMatchesLineSeparators])
-        let nsString = tableHtml as NSString
-        let results = regex?.matches(in: tableHtml, options: [], range: NSRange(location: 0, length: nsString.length)) ?? []
-        
-        for result in results {
-            guard result.numberOfRanges >= 9 else { continue }
-            
-            let lessonNumberRange = result.range(at: 1)
-            let timeRange = result.range(at: 2)
-            let lessonTypeRange = result.range(at: 3)
-            let subjectRange = result.range(at: 4)
-            let onlineInfoRange = result.range(at: 5)
-            let auditoriumRange = result.range(at: 6)
-            let groupsRange = result.range(at: 7)
-            let teacherNameRange = result.range(at: 8)
-            let teacherEmailRange = result.numberOfRanges > 9 ? result.range(at: 9) : NSRange(location: NSNotFound, length: 0)
-            
-            let lessonNumber = nsString.substring(with: lessonNumberRange)
-            let timeString = nsString.substring(with: timeRange)
-            let lessonTypeString = nsString.substring(with: lessonTypeRange)
-            let subject = nsString.substring(with: subjectRange).trimmingCharacters(in: .whitespacesAndNewlines)
-            let onlineInfo = nsString.substring(with: onlineInfoRange).trimmingCharacters(in: .whitespacesAndNewlines)
-            let auditorium = nsString.substring(with: auditoriumRange).trimmingCharacters(in: .whitespacesAndNewlines)
-            let groups = nsString.substring(with: groupsRange).trimmingCharacters(in: .whitespacesAndNewlines)
-            let teacherName = nsString.substring(with: teacherNameRange).trimmingCharacters(in: .whitespacesAndNewlines)
-            
-            let teacherEmail = teacherEmailRange.location != NSNotFound ? 
-                nsString.substring(with: teacherEmailRange).trimmingCharacters(in: .whitespacesAndNewlines) : nil
-            
-            // Парсим время начала и конца
-            let timeComponents = timeString.split(separator: "-")
-            guard timeComponents.count == 2 else { continue }
-            
-            let startTime = String(timeComponents[0])
-            let endTime = String(timeComponents[1])
-            
-            let lessonType = LessonType(from: lessonTypeString)
-            let teacher = Teacher(name: teacherName, email: teacherEmail)
-            
-            let lesson = Lesson(
-                pairNumber: Int(lessonNumber) ?? 0,
-                timeStart: startTime,
-                timeEnd: endTime,
-                type: lessonType,
-                subject: subject,
-                room: auditorium.isEmpty ? nil : auditorium,
-                teacher: teacherName.isEmpty ? nil : teacher,
-                groups: groups.isEmpty ? [] : [groups],
-                onlineLink: onlineInfo.isEmpty ? nil : onlineInfo
-            )
-            
-            lessons.append(lesson)
-        }
-        
-        return lessons.sorted { $0.pairNumber < $1.pairNumber }
-    }
-    
-    /// Извлекает название группы из HTML (если возможно)
-    private func extractGroupName(from html: String) -> String? {
-        // Ищем название группы в HTML
-        let groupPattern = #"(?:гр\.\s*|группа\s*)([А-Я0-9]+[А-Я]{3})"#
-        let regex = try? NSRegularExpression(pattern: groupPattern, options: [.caseInsensitive])
-        let nsString = html as NSString
-        
-        if let match = regex?.firstMatch(in: html, options: [], range: NSRange(location: 0, length: nsString.length)),
-           match.numberOfRanges > 1 {
-            let groupNameRange = match.range(at: 1)
-            return nsString.substring(with: groupNameRange)
-        }
-        
-        return nil
+        return trimmedName.isEmpty ? nil : trimmedName
     }
 }
 
@@ -695,6 +470,24 @@ extension DateFormatter {
     static let timeFormatter: DateFormatter = {
         let formatter = DateFormatter()
         formatter.dateFormat = "HH:mm"
+        formatter.locale = Locale(identifier: "ru_RU")
+        formatter.timeZone = TimeZone(identifier: "Asia/Vladivostok")
+        return formatter
+    }()
+    
+    /// Форматтер даты для нового REST API (например, "2026-02-09")
+    static let serverDateFormatter: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.dateFormat = "yyyy-MM-dd"
+        formatter.locale = Locale(identifier: "ru_RU")
+        formatter.timeZone = TimeZone(identifier: "Asia/Vladivostok")
+        return formatter
+    }()
+    
+    /// Форматтер для дня недели на русском (например, "понедельник")
+    static let weekdayRuFormatter: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.dateFormat = "EEEE"
         formatter.locale = Locale(identifier: "ru_RU")
         formatter.timeZone = TimeZone(identifier: "Asia/Vladivostok")
         return formatter
