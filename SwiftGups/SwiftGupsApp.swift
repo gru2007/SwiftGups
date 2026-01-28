@@ -14,6 +14,9 @@ struct SwiftGupsApp: App {
     @StateObject private var liveActivityManager = LiveActivityManager()
     @Environment(\.scenePhase) private var scenePhase
     
+    // Кешируем ModelContainer, чтобы не создавать его несколько раз
+    private static var cachedModelContainer: ModelContainer?
+    
     init() {
         // Регистрируем фоновые задачи при запуске приложения
         if #available(iOS 13.0, *) {
@@ -26,7 +29,7 @@ struct SwiftGupsApp: App {
             MainAppView()
                 .environmentObject(liveActivityManager)
         }
-        .modelContainer(createModelContainer())
+        .modelContainer(Self.getOrCreateModelContainer())
         .onChange(of: scenePhase) { oldPhase, newPhase in
             if #available(iOS 13.0, *) {
                 handleScenePhaseChange(from: oldPhase, to: newPhase)
@@ -34,30 +37,16 @@ struct SwiftGupsApp: App {
         }
     }
     
-    @available(iOS 13.0, *)
-    private func handleScenePhaseChange(from oldPhase: ScenePhase, to newPhase: ScenePhase) {
-        switch newPhase {
-        case .background:
-            // Приложение уходит в фон - планируем фоновые задачи
-            if liveActivityManager.isEnabled {
-                BackgroundTaskManager.shared.scheduleBackgroundRefresh()
-                print("📱 App went to background, scheduled background refresh")
-            }
-        case .active:
-            // Приложение стало активным - перепланируем задачи если нужно
-            if liveActivityManager.isEnabled {
-                BackgroundTaskManager.shared.scheduleBackgroundRefresh()
-                print("📱 App became active, rescheduled background refresh")
-            }
-        case .inactive:
-            // Приложение неактивно (переходное состояние)
-            break
-        @unknown default:
-            break
+    private static func getOrCreateModelContainer() -> ModelContainer {
+        if let cached = cachedModelContainer {
+            return cached
         }
+        let container = createModelContainer()
+        cachedModelContainer = container
+        return container
     }
     
-    private func createModelContainer() -> ModelContainer {
+    private static func createModelContainer() -> ModelContainer {
         let schema = Schema([User.self, Homework.self])
         
         let modelConfiguration = ModelConfiguration(
@@ -88,6 +77,27 @@ struct SwiftGupsApp: App {
             } catch {
                 fatalError("💥 Failed to create local container: \(error)")
             }
+        }
+    }
+    
+    @available(iOS 13.0, *)
+    private func handleScenePhaseChange(from oldPhase: ScenePhase, to newPhase: ScenePhase) {
+        switch newPhase {
+        case .background:
+            // Приложение уходит в фон - планируем фоновые задачи только если они еще не запланированы
+            if liveActivityManager.isEnabled {
+                BackgroundTaskManager.shared.scheduleBackgroundRefresh()
+                print("📱 App went to background")
+            }
+        case .active:
+            // При переходе в активное состояние не планируем задачи повторно
+            // Они уже должны быть запланированы при включении Live Activity
+            break
+        case .inactive:
+            // Приложение неактивно (переходное состояние)
+            break
+        @unknown default:
+            break
         }
     }
     

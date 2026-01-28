@@ -26,7 +26,7 @@ final class BackgroundTaskManager {
     
     /// Планирует следующее выполнение фоновой задачи
     func scheduleBackgroundRefresh() {
-        // Отменяем старые задачи перед планированием новых
+        // Отменяем старые задачи перед планированием, чтобы избежать ошибки "too many pending tasks"
         BGTaskScheduler.shared.cancel(taskRequestWithIdentifier: taskIdentifier)
         
         let request = BGProcessingTaskRequest(identifier: taskIdentifier)
@@ -41,7 +41,12 @@ final class BackgroundTaskManager {
             try BGTaskScheduler.shared.submit(request)
             print("✅ Background task scheduled for Live Activity refresh")
         } catch {
-            print("❌ Failed to schedule background task: \(error)")
+            // Code 1 = BGTaskSchedulerErrorCodeTooManyPendingTaskRequests
+            if let bgError = error as? BGTaskScheduler.Error, bgError.code == .tooManyPendingTaskRequests {
+                print("⚠️ Too many pending tasks (this is normal in simulator), skipping")
+            } else {
+                print("❌ Failed to schedule background task: \(error)")
+            }
         }
     }
     
@@ -59,7 +64,11 @@ final class BackgroundTaskManager {
             try BGTaskScheduler.shared.submit(request)
             print("✅ Background task scheduled for \(date)")
         } catch {
-            print("❌ Failed to schedule background task at \(date): \(error)")
+            if let bgError = error as? BGTaskScheduler.Error, bgError.code == .tooManyPendingTaskRequests {
+                print("⚠️ Too many pending tasks (this is normal in simulator), skipping schedule at \(date)")
+            } else {
+                print("❌ Failed to schedule background task at \(date): \(error)")
+            }
         }
     }
     

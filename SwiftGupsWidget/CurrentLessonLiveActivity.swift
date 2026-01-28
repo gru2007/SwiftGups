@@ -148,50 +148,50 @@ private struct LockScreenView: View {
     var body: some View {
         VStack(spacing: 0) {
             // Текущая пара
-            HStack(alignment: .top, spacing: 14) {
+            HStack(alignment: .top, spacing: 12) {
                 // Иконка
                 LessonIcon(subject: context.state.subject)
-                    .frame(width: 44, height: 44)
+                    .frame(width: 36, height: 36)
                 
                 // Информация о текущей паре
-                VStack(alignment: .leading, spacing: 8) {
+                VStack(alignment: .leading, spacing: 6) {
                     // Название предмета
-                    Text(shortenSubject(context.state.subject, maxLength: 40))
-                        .font(.system(.title3, design: .default).weight(.semibold))
+                    Text(shortenSubject(context.state.subject, maxLength: 35))
+                        .font(.system(.headline, design: .default).weight(.semibold))
                         .foregroundStyle(.primary)
                         .lineLimit(2)
                         .multilineTextAlignment(.leading)
                         .truncationMode(.tail)
-                        .minimumScaleFactor(0.7)
+                        .minimumScaleFactor(0.75)
                     
                     // Метаданные
-                    HStack(spacing: 10) {
+                    HStack(spacing: 8) {
                         // Номер пары
-                        HStack(spacing: 4) {
+                        HStack(spacing: 3) {
                             Image(systemName: "number.circle.fill")
-                                .font(.system(.caption))
+                                .font(.system(.caption2))
                             Text("\(context.state.pairNumber)")
-                                .font(.system(.subheadline, design: .default).weight(.medium))
+                                .font(.system(.caption, design: .default).weight(.medium))
                         }
                         .foregroundStyle(.blue)
                         
                         // Аудитория
                         if let room = context.state.room, !room.isEmpty {
-                            HStack(spacing: 4) {
+                            HStack(spacing: 3) {
                                 Image(systemName: "mappin.circle.fill")
-                                    .font(.system(.caption))
+                                    .font(.system(.caption2))
                                 Text(room)
-                                    .font(.system(.subheadline, design: .default))
+                                    .font(.system(.caption, design: .default))
                             }
                             .foregroundStyle(.secondary)
                         }
                         
                         // Время
-                        HStack(spacing: 4) {
+                        HStack(spacing: 3) {
                             Image(systemName: "clock.fill")
-                                .font(.system(.caption))
+                                .font(.system(.caption2))
                             Text(timeRange)
-                                .font(.system(.subheadline, design: .monospaced))
+                                .font(.system(.caption, design: .monospaced))
                         }
                         .foregroundStyle(.secondary)
                     }
@@ -199,54 +199,54 @@ private struct LockScreenView: View {
                 
                 Spacer()
             }
-            .padding(.horizontal, 18)
-            .padding(.top, 16)
-            .padding(.bottom, 14)
+            .padding(.horizontal, 16)
+            .padding(.top, 12)
+            .padding(.bottom, 10)
             
             // Разделитель
             Divider()
-                .padding(.horizontal, 18)
+                .padding(.horizontal, 16)
             
             // Следующая пара
             if let next = context.state.nextSubject, !next.isEmpty {
-                HStack(alignment: .top, spacing: 14) {
+                HStack(alignment: .top, spacing: 12) {
                     // Иконка следующей пары
                     Image(systemName: "arrow.right.circle.fill")
-                        .font(.system(.title2))
+                        .font(.system(.title3))
                         .foregroundStyle(.green)
-                        .frame(width: 44, height: 44)
+                        .frame(width: 36, height: 36)
                     
                     // Информация о следующей паре
-                    VStack(alignment: .leading, spacing: 8) {
+                    VStack(alignment: .leading, spacing: 6) {
                         // Название предмета
-                        Text(shortenSubject(next, maxLength: 40))
-                            .font(.system(.headline, design: .default).weight(.medium))
+                        Text(shortenSubject(next, maxLength: 35))
+                            .font(.system(.subheadline, design: .default).weight(.medium))
                             .foregroundStyle(.primary)
                             .lineLimit(2)
                             .multilineTextAlignment(.leading)
                             .truncationMode(.tail)
-                            .minimumScaleFactor(0.7)
+                            .minimumScaleFactor(0.75)
                         
                         // Метаданные
-                        HStack(spacing: 10) {
+                        HStack(spacing: 8) {
                             // Номер пары
                             if let nextNum = context.state.nextPairNumber {
-                                HStack(spacing: 4) {
+                                HStack(spacing: 3) {
                                     Image(systemName: "number.circle.fill")
-                                        .font(.system(.caption))
+                                        .font(.system(.caption2))
                                     Text("\(nextNum)")
-                                        .font(.system(.subheadline, design: .default).weight(.medium))
+                                        .font(.system(.caption, design: .default).weight(.medium))
                                 }
                                 .foregroundStyle(.blue)
                             }
                             
                             // Аудитория
                             if let nextRoom = context.state.nextRoom, !nextRoom.isEmpty {
-                                HStack(spacing: 4) {
+                                HStack(spacing: 3) {
                                     Image(systemName: "mappin.circle.fill")
-                                        .font(.system(.caption))
+                                        .font(.system(.caption2))
                                     Text(nextRoom)
-                                        .font(.system(.subheadline, design: .default))
+                                        .font(.system(.caption, design: .default))
                                 }
                                 .foregroundStyle(.secondary)
                             }
@@ -254,11 +254,11 @@ private struct LockScreenView: View {
                             // Время
                             if let nextStart = context.state.nextStartDate,
                                let nextEnd = context.state.nextEndDate {
-                                HStack(spacing: 4) {
+                                HStack(spacing: 3) {
                                     Image(systemName: "clock.fill")
-                                        .font(.system(.caption))
+                                        .font(.system(.caption2))
                                     Text("\(formatTime(nextStart))–\(formatTime(nextEnd))")
-                                        .font(.system(.subheadline, design: .monospaced))
+                                        .font(.system(.caption, design: .monospaced))
                                 }
                                 .foregroundStyle(.secondary)
                             }
@@ -267,20 +267,15 @@ private struct LockScreenView: View {
                     
                     Spacer()
                 }
-                .padding(.horizontal, 18)
-                .padding(.top, 14)
-                .padding(.bottom, 16)
-            } else {
-                // Если следующей пары нет, показываем только текущую
-                Spacer()
-                    .frame(height: 0)
+                .padding(.horizontal, 16)
+                .padding(.top, 10)
+                .padding(.bottom, 12)
             }
         }
         .background {
-            RoundedRectangle(cornerRadius: 18, style: .continuous)
-                .fill(.ultraThinMaterial)
+            RoundedRectangle(cornerRadius: 16, style: .continuous)
+                .fill(.thinMaterial)
         }
-        .activityBackgroundTint(Color.clear)
     }
     
     private var timeRange: String {
