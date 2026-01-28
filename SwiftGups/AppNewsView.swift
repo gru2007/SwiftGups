@@ -5,8 +5,6 @@ struct AppNewsView: View {
     @State private var selectedNewsItem: AppNewsItem?
     @State private var selectedSection: Section = .news
     
-    @AppStorage("appNewsDismissedBannerId") private var dismissedBannerId: String = ""
-    
     enum Section: String, CaseIterable {
         case news = "Новости"
         case changelog = "Changelog"
@@ -61,12 +59,10 @@ struct AppNewsView: View {
         } else if let feed = service.feed {
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 16) {
-                    if let banner = feed.banner, shouldShowBanner(banner) {
-                        AppNewsBannerView(banner: banner) {
-                            dismissedBannerId = banner.id
-                        }
-                        .padding(.horizontal)
-                        .padding(.top, 8)
+                    if let banner = feed.banner {
+                        AppNewsBannerHost(banner: banner)
+                            .padding(.horizontal)
+                            .padding(.top, 8)
                     }
                     
                     if let updatedAt = feed.updatedAt {
@@ -116,130 +112,9 @@ struct AppNewsView: View {
             .padding(.top, 40)
         }
     }
-    
-    private func shouldShowBanner(_ banner: AppNewsBanner) -> Bool {
-        let isDismissible = banner.dismissible ?? true
-        if !isDismissible { return true }
-        return dismissedBannerId != banner.id
-    }
 }
 
 // MARK: - Components
-
-private struct AppNewsBannerView: View {
-    let banner: AppNewsBanner
-    let dismiss: () -> Void
-    
-    @Environment(\.openURL) private var openURL
-    
-    private var background: Color {
-        switch banner.style {
-        case .info: return Color.blue.opacity(0.12)
-        case .success: return Color.green.opacity(0.12)
-        case .warning: return Color.orange.opacity(0.14)
-        case .error: return Color.red.opacity(0.12)
-        }
-    }
-    
-    private var border: Color {
-        switch banner.style {
-        case .info: return Color.blue.opacity(0.25)
-        case .success: return Color.green.opacity(0.25)
-        case .warning: return Color.orange.opacity(0.28)
-        case .error: return Color.red.opacity(0.25)
-        }
-    }
-    
-    var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            HStack(alignment: .top, spacing: 12) {
-                Image(systemName: iconName)
-                    .foregroundColor(iconColor)
-                    .font(.title3)
-                
-                VStack(alignment: .leading, spacing: 6) {
-                    Text(banner.title)
-                        .font(.headline)
-                    
-                    AppMarkdownText(markdown: banner.markdown)
-                        .font(.subheadline)
-                        .foregroundColor(.secondary)
-                }
-                
-                Spacer()
-                
-                if banner.dismissible ?? true {
-                    Button {
-                        dismiss()
-                    } label: {
-                        Image(systemName: "xmark")
-                            .font(.caption)
-                            .foregroundColor(.secondary)
-                            .padding(6)
-                            .background(Circle().fill(Color(.systemBackground).opacity(0.7)))
-                    }
-                    .buttonStyle(.plain)
-                    .accessibilityLabel("Скрыть баннер")
-                }
-            }
-            
-            if let imageUrl = banner.imageUrl, let url = URL(string: imageUrl) {
-                AsyncImage(url: url) { phase in
-                    switch phase {
-                    case .success(let image):
-                        image
-                            .resizable()
-                            .aspectRatio(contentMode: .fill)
-                            .frame(maxHeight: 160)
-                            .clipped()
-                            .cornerRadius(12)
-                    case .empty:
-                        ProgressView()
-                            .frame(maxWidth: .infinity, minHeight: 80)
-                    case .failure:
-                        EmptyView()
-                    @unknown default:
-                        EmptyView()
-                    }
-                }
-            }
-            
-            if let link = banner.link, let url = URL(string: link.url) {
-                Button(link.title) {
-                    openURL(url)
-                }
-                .font(.subheadline.weight(.semibold))
-            }
-        }
-        .padding(14)
-        .background(
-            RoundedRectangle(cornerRadius: 16)
-                .fill(background)
-                .overlay(
-                    RoundedRectangle(cornerRadius: 16)
-                        .stroke(border, lineWidth: 1)
-                )
-        )
-    }
-    
-    private var iconName: String {
-        switch banner.style {
-        case .info: return "info.circle.fill"
-        case .success: return "checkmark.seal.fill"
-        case .warning: return "exclamationmark.triangle.fill"
-        case .error: return "xmark.octagon.fill"
-        }
-    }
-    
-    private var iconColor: Color {
-        switch banner.style {
-        case .info: return .blue
-        case .success: return .green
-        case .warning: return .orange
-        case .error: return .red
-        }
-    }
-}
 
 private struct AppNewsCard: View {
     let item: AppNewsItem
@@ -391,23 +266,6 @@ private struct AppNewsDetailSheet: View {
         }
         .presentationDetents([.large])
         .presentationDragIndicator(.visible)
-    }
-}
-
-private struct AppMarkdownText: View {
-    let markdown: String
-    
-    var body: some View {
-        if let attributed = try? AttributedString(
-            markdown: markdown,
-            options: AttributedString.MarkdownParsingOptions(interpretedSyntax: .full)
-        ) {
-            Text(attributed)
-                .textSelection(.enabled)
-        } else {
-            Text(markdown)
-                .textSelection(.enabled)
-        }
     }
 }
 

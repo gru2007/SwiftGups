@@ -144,6 +144,7 @@ struct ScheduleTab: View {
     let currentUser: User
     let isInSplitView: Bool
     @StateObject private var scheduleService = ScheduleService()
+    @StateObject private var appNewsService = AppNewsService()
     @State private var showingLessonTimes = false
 
     // Проверяем, указал ли пользователь группу
@@ -154,6 +155,12 @@ struct ScheduleTab: View {
             if !hasGroup {
                 // Сообщение, если группа не выбрана
                 VStack(spacing: 16) {
+                    if let banner = appNewsService.feed?.banner {
+                        AppNewsBannerHost(banner: banner)
+                            .padding(.horizontal)
+                            .padding(.top, 8)
+                    }
+                    
                     Text("Группа не выбрана")
                         .font(.headline)
 
@@ -166,6 +173,12 @@ struct ScheduleTab: View {
             } else if isInSplitView {
                 // iPad layout - без NavigationView (уже в NavigationSplitView)
                 VStack(spacing: 16) {
+                    if let banner = appNewsService.feed?.banner {
+                        AppNewsBannerHost(banner: banner)
+                            .padding(.horizontal)
+                            .padding(.top, 8)
+                    }
+                    
                     // Основной контент расписания
                     ContentView(scheduleService: scheduleService, showUserInfo: false)
                         .padding(.horizontal)
@@ -186,6 +199,12 @@ struct ScheduleTab: View {
                 // iPhone layout - с NavigationView
                 NavigationView {
                     VStack(spacing: 12) {
+                        if let banner = appNewsService.feed?.banner {
+                            AppNewsBannerHost(banner: banner)
+                                .padding(.horizontal)
+                                .padding(.top, 8)
+                        }
+                        
                         // Основной контент расписания без повторного заголовка/юзер блока
                         ContentView(scheduleService: scheduleService, showUserInfo: false)
                             .padding(.horizontal)
@@ -206,6 +225,7 @@ struct ScheduleTab: View {
         .sheet(isPresented: $showingLessonTimes) {
             LessonTimesSheet()
         }
+        .task { await appNewsService.loadIfNeeded() }
         .onAppear {
             // Автоматически выбираем факультет и группу пользователя
             guard hasGroup else { return }
