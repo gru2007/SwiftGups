@@ -4,6 +4,15 @@
 <dict>
 	<key>aps-environment</key>
 	<string>development</string>
+	<key>com.apple.developer.associated-appclip-app-identifiers</key>
+	<array>
+		<string>$(AppIdentifierPrefix)tech.artemev.swiftgups.Clip</string>
+	</array>
+	<key>com.apple.developer.associated-domains</key>
+	<array>
+		<string>appclips:clipcards.r-artemev.ru</string>
+		<string>applinks:clipcards.r-artemev.ru</string>
+	</array>
 	<key>com.apple.developer.icloud-container-identifiers</key>
 	<array>
 		<string>iCloud.tech.artemev.swiftgups</string>
@@ -23,9 +32,5 @@
 	<true/>
 	<key>com.apple.security.files.user-selected.read-only</key>
 	<true/>
-	<key>com.apple.developer.associated-appclip-app-identifiers</key>
-	<array>
-		<string>$(AppIdentifierPrefix)tech.artemev.swiftgups.Clip</string>
-	</array>
 </dict>
 </plist>
