@@ -239,6 +239,8 @@ private struct MiniFullAppPromoBanner: View {
 
 private struct MiniFacultySelectionCard: View {
     @ObservedObject var scheduleService: MiniScheduleService
+    @State private var showVPNHint = false
+    @State private var vpnHintTask: Task<Void, Never>?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -287,6 +289,10 @@ private struct MiniFacultySelectionCard: View {
                 )
             }
 
+            if showVPNHint {
+                MiniVPNHintBanner()
+            }
+
             MiniFacultyMissingIdBanner(missingNames: scheduleService.facultiesMissingIDs)
         }
         .padding(16)
@@ -295,6 +301,35 @@ private struct MiniFacultySelectionCard: View {
                 .fill(Color(.systemBackground))
                 .shadow(color: .black.opacity(0.06), radius: 8, x: 0, y: 4)
         )
+        .onAppear {
+            updateVPNHint(isLoading: scheduleService.isLoadingFaculties)
+        }
+        .onChange(of: scheduleService.isLoadingFaculties) { newValue in
+            updateVPNHint(isLoading: newValue)
+        }
+    }
+
+    private func updateVPNHint(isLoading: Bool) {
+        vpnHintTask?.cancel()
+        vpnHintTask = nil
+
+        if !isLoading {
+            withAnimation(.easeInOut(duration: 0.2)) {
+                showVPNHint = false
+            }
+            return
+        }
+
+        vpnHintTask = Task {
+            try? await Task.sleep(nanoseconds: 6_000_000_000)
+            guard !Task.isCancelled else { return }
+            guard scheduleService.isLoadingFaculties else { return }
+            await MainActor.run {
+                withAnimation(.easeInOut(duration: 0.2)) {
+                    showVPNHint = true
+                }
+            }
+        }
     }
 }
 
@@ -485,6 +520,8 @@ private struct MiniDateSelectionCard: View {
 private struct MiniGroupSelectionCard: View {
     @ObservedObject var scheduleService: MiniScheduleService
     @Binding var searchText: String
+    @State private var showVPNHint = false
+    @State private var vpnHintTask: Task<Void, Never>?
 
     private var filteredGroups: [Group] {
         scheduleService.filteredGroups(searchText: searchText)
@@ -512,7 +549,13 @@ private struct MiniGroupSelectionCard: View {
             if scheduleService.isLoadingGroups {
                 HStack {
                     Spacer()
-                    ProgressView("Загрузка групп...")
+                    VStack(spacing: 10) {
+                        ProgressView("Загрузка групп...")
+                        if showVPNHint {
+                            MiniVPNHintBanner()
+                                .frame(maxWidth: 340)
+                        }
+                    }
                     Spacer()
                 }
                 .padding(.vertical, 10)
@@ -523,19 +566,18 @@ private struct MiniGroupSelectionCard: View {
                     .frame(maxWidth: .infinity, alignment: .center)
                     .padding(.vertical, 10)
             } else {
-                ScrollView(.horizontal, showsIndicators: false) {
-                    LazyHStack(spacing: 12) {
-                        ForEach(filteredGroups) { group in
-                            MiniGroupCard(
-                                group: group,
-                                isSelected: scheduleService.selectedGroup?.id == group.id
-                            ) {
-                                scheduleService.selectGroup(group)
-                                searchText = ""
-                            }
+                LazyVGrid(
+                    columns: [GridItem(.adaptive(minimum: 160), spacing: 12)],
+                    spacing: 12
+                ) {
+                    ForEach(filteredGroups) { group in
+                        MiniGroupCard(
+                            group: group,
+                            isSelected: scheduleService.selectedGroup?.id == group.id
+                        ) {
+                            scheduleService.selectGroup(group)
                         }
                     }
-                    .padding(.horizontal, 2)
                 }
             }
         }
@@ -545,6 +587,35 @@ private struct MiniGroupSelectionCard: View {
                 .fill(Color(.systemBackground))
                 .shadow(color: .black.opacity(0.06), radius: 8, x: 0, y: 4)
         )
+        .onAppear {
+            updateVPNHint(isLoading: scheduleService.isLoadingGroups)
+        }
+        .onChange(of: scheduleService.isLoadingGroups) { newValue in
+            updateVPNHint(isLoading: newValue)
+        }
+    }
+
+    private func updateVPNHint(isLoading: Bool) {
+        vpnHintTask?.cancel()
+        vpnHintTask = nil
+
+        if !isLoading {
+            withAnimation(.easeInOut(duration: 0.2)) {
+                showVPNHint = false
+            }
+            return
+        }
+
+        vpnHintTask = Task {
+            try? await Task.sleep(nanoseconds: 6_000_000_000)
+            guard !Task.isCancelled else { return }
+            guard scheduleService.isLoadingGroups else { return }
+            await MainActor.run {
+                withAnimation(.easeInOut(duration: 0.2)) {
+                    showVPNHint = true
+                }
+            }
+        }
     }
 }
 
@@ -557,7 +628,7 @@ private struct MiniGroupCard: View {
         Button(action: action) {
             VStack(alignment: .leading, spacing: 8) {
                 Text(group.name)
-                    .font(.headline)
+                    .font(.subheadline)
                     .fontWeight(.semibold)
                     .foregroundColor(isSelected ? .white : .primary)
                     .lineLimit(1)
@@ -568,7 +639,7 @@ private struct MiniGroupCard: View {
                     .lineLimit(2)
             }
             .padding(12)
-            .frame(width: 190, height: 84, alignment: .leading)
+            .frame(maxWidth: .infinity, minHeight: 84, maxHeight: 96, alignment: .leading)
             .background(
                 RoundedRectangle(cornerRadius: 14)
                     .fill(isSelected ? Color.blue : Color(.systemGray6))
@@ -585,6 +656,8 @@ private struct MiniGroupCard: View {
 private struct MiniScheduleDisplayCard: View {
     @ObservedObject var scheduleService: MiniScheduleService
     let viewMode: MiniScheduleViewMode
+    @State private var showVPNHint = false
+    @State private var vpnHintTask: Task<Void, Never>?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -602,6 +675,10 @@ private struct MiniScheduleDisplayCard: View {
                         Text("Загрузка расписания...")
                             .font(.subheadline)
                             .foregroundColor(.secondary)
+                        if showVPNHint {
+                            MiniVPNHintBanner()
+                                .frame(maxWidth: 360)
+                        }
                     }
                     Spacer()
                 }
@@ -624,6 +701,35 @@ private struct MiniScheduleDisplayCard: View {
                 .fill(Color(.systemBackground))
                 .shadow(color: .black.opacity(0.06), radius: 8, x: 0, y: 4)
         )
+        .onAppear {
+            updateVPNHint(isLoading: scheduleService.isLoadingSchedule)
+        }
+        .onChange(of: scheduleService.isLoadingSchedule) { newValue in
+            updateVPNHint(isLoading: newValue)
+        }
+    }
+
+    private func updateVPNHint(isLoading: Bool) {
+        vpnHintTask?.cancel()
+        vpnHintTask = nil
+
+        if !isLoading {
+            withAnimation(.easeInOut(duration: 0.2)) {
+                showVPNHint = false
+            }
+            return
+        }
+
+        vpnHintTask = Task {
+            try? await Task.sleep(nanoseconds: 6_000_000_000)
+            guard !Task.isCancelled else { return }
+            guard scheduleService.isLoadingSchedule else { return }
+            await MainActor.run {
+                withAnimation(.easeInOut(duration: 0.2)) {
+                    showVPNHint = true
+                }
+            }
+        }
     }
 }
 
@@ -669,6 +775,29 @@ private struct MiniErrorBanner: View {
                 .overlay(
                     RoundedRectangle(cornerRadius: 14)
                         .stroke(Color.red.opacity(0.25), lineWidth: 1)
+                )
+        )
+    }
+}
+
+private struct MiniVPNHintBanner: View {
+    var body: some View {
+        HStack(spacing: 10) {
+            Image(systemName: "globe")
+                .foregroundColor(.orange)
+            Text("Если загрузка занимает много времени, попробуйте включить VPN.")
+                .font(.caption)
+                .foregroundColor(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+            Spacer(minLength: 0)
+        }
+        .padding(12)
+        .background(
+            RoundedRectangle(cornerRadius: 14)
+                .fill(Color.orange.opacity(0.08))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 14)
+                        .stroke(Color.orange.opacity(0.25), lineWidth: 1)
                 )
         )
     }

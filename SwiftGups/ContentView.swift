@@ -149,6 +149,8 @@ struct HeaderView: View {
 
 struct FacultySelectionView: View {
     @ObservedObject var scheduleService: ScheduleService
+    @State private var showVPNHint = false
+    @State private var vpnHintTask: Task<Void, Never>?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -193,6 +195,10 @@ struct FacultySelectionView: View {
                         .stroke(Color(.systemGray4), lineWidth: 1)
                 )
             }
+
+            if showVPNHint {
+                VPNHintBanner()
+            }
             
             FacultyMissingIdBanner(missingNames: scheduleService.facultiesMissingIDs)
         }
@@ -202,6 +208,35 @@ struct FacultySelectionView: View {
                 .fill(Color(.systemBackground))
                 .shadow(color: .black.opacity(0.1), radius: 5, x: 0, y: 2)
         )
+        .onAppear {
+            updateVPNHint(isLoading: scheduleService.isLoadingFaculties)
+        }
+        .onChange(of: scheduleService.isLoadingFaculties) { newValue in
+            updateVPNHint(isLoading: newValue)
+        }
+    }
+
+    private func updateVPNHint(isLoading: Bool) {
+        vpnHintTask?.cancel()
+        vpnHintTask = nil
+
+        if !isLoading {
+            withAnimation(.easeInOut(duration: 0.2)) {
+                showVPNHint = false
+            }
+            return
+        }
+
+        vpnHintTask = Task {
+            try? await Task.sleep(nanoseconds: 6_000_000_000)
+            guard !Task.isCancelled else { return }
+            guard scheduleService.isLoadingFaculties else { return }
+            await MainActor.run {
+                withAnimation(.easeInOut(duration: 0.2)) {
+                    showVPNHint = true
+                }
+            }
+        }
     }
 }
 
@@ -407,6 +442,8 @@ struct DateSelectionView: View {
 struct GroupSelectionView: View {
     @ObservedObject var scheduleService: ScheduleService
     @Binding var searchText: String
+    @State private var showVPNHint = false
+    @State private var vpnHintTask: Task<Void, Never>?
     
     private var filteredGroups: [Group] {
         scheduleService.filteredGroups(searchText: searchText)
@@ -436,11 +473,17 @@ struct GroupSelectionView: View {
             }
             .padding(.horizontal)
             
-            if scheduleService.isLoading {
+            if scheduleService.isLoadingGroups {
                 HStack {
                     Spacer()
-                    ProgressView("Загрузка групп...")
-                        .progressViewStyle(CircularProgressViewStyle())
+                    VStack(spacing: 10) {
+                        ProgressView("Загрузка групп...")
+                            .progressViewStyle(CircularProgressViewStyle())
+                        if showVPNHint {
+                            VPNHintBanner()
+                                .frame(maxWidth: 340)
+                        }
+                    }
                     Spacer()
                 }
                 .padding()
@@ -450,20 +493,20 @@ struct GroupSelectionView: View {
                     .frame(maxWidth: .infinity, alignment: .center)
                     .padding()
             } else {
-                ScrollView(.horizontal, showsIndicators: false) {
-                    LazyHStack(spacing: 12) {
-                        ForEach(filteredGroups) { group in
-                            GroupCard(
-                                group: group,
-                                isSelected: scheduleService.selectedGroup?.id == group.id
-                            ) {
-                                scheduleService.selectGroup(group)
-                                searchText = "" // Очищаем поиск после выбора
-                            }
+                LazyVGrid(
+                    columns: [GridItem(.adaptive(minimum: 160), spacing: 12)],
+                    spacing: 12
+                ) {
+                    ForEach(filteredGroups) { group in
+                        GroupCard(
+                            group: group,
+                            isSelected: scheduleService.selectedGroup?.id == group.id
+                        ) {
+                            scheduleService.selectGroup(group)
                         }
                     }
-                    .padding(.horizontal)
                 }
+                .padding(.horizontal)
             }
         }
         .padding()
@@ -472,6 +515,35 @@ struct GroupSelectionView: View {
                 .fill(Color(.systemBackground))
                 .shadow(color: .black.opacity(0.1), radius: 5, x: 0, y: 2)
         )
+        .onAppear {
+            updateVPNHint(isLoading: scheduleService.isLoadingGroups)
+        }
+        .onChange(of: scheduleService.isLoadingGroups) { newValue in
+            updateVPNHint(isLoading: newValue)
+        }
+    }
+
+    private func updateVPNHint(isLoading: Bool) {
+        vpnHintTask?.cancel()
+        vpnHintTask = nil
+
+        if !isLoading {
+            withAnimation(.easeInOut(duration: 0.2)) {
+                showVPNHint = false
+            }
+            return
+        }
+
+        vpnHintTask = Task {
+            try? await Task.sleep(nanoseconds: 6_000_000_000)
+            guard !Task.isCancelled else { return }
+            guard scheduleService.isLoadingGroups else { return }
+            await MainActor.run {
+                withAnimation(.easeInOut(duration: 0.2)) {
+                    showVPNHint = true
+                }
+            }
+        }
     }
 }
 
@@ -486,7 +558,7 @@ struct GroupCard: View {
         Button(action: action) {
             VStack(alignment: .leading, spacing: 8) {
                 Text(group.name)
-                    .font(.headline)
+                    .font(.subheadline)
                     .fontWeight(.semibold)
                     .foregroundColor(isSelected ? .white : .primary)
                 
@@ -497,7 +569,7 @@ struct GroupCard: View {
                     .lineLimit(2)
             }
             .padding()
-            .frame(width: 180, height: 80)
+            .frame(maxWidth: .infinity, minHeight: 80, maxHeight: 92, alignment: .leading)
             .background(
                 RoundedRectangle(cornerRadius: 12)
                     .fill(isSelected ? Color.blue : Color(.systemGray6))
@@ -520,8 +592,8 @@ struct ScheduleDisplayView: View {
                 }
             }
             
-            if scheduleService.isLoading {
-                LoadingView()
+            if scheduleService.isLoadingSchedule {
+                LoadingView(scheduleService: scheduleService)
             } else if let schedule = scheduleService.currentSchedule {
                 ScheduleMainView(
                     schedule: schedule,
@@ -873,6 +945,10 @@ struct ErrorView: View {
 // MARK: - Loading View
 
 struct LoadingView: View {
+    @ObservedObject var scheduleService: ScheduleService
+    @State private var showVPNHint = false
+    @State private var vpnHintTask: Task<Void, Never>?
+
     var body: some View {
         HStack {
             Spacer()
@@ -884,10 +960,66 @@ struct LoadingView: View {
                 Text("Загрузка расписания...")
                     .font(.subheadline)
                     .foregroundColor(.secondary)
+
+                if showVPNHint {
+                    VPNHintBanner()
+                        .frame(maxWidth: 360)
+                }
             }
             Spacer()
         }
         .padding(40)
+        .onAppear {
+            updateVPNHint(isLoading: scheduleService.isLoadingSchedule)
+        }
+        .onChange(of: scheduleService.isLoadingSchedule) { newValue in
+            updateVPNHint(isLoading: newValue)
+        }
+    }
+
+    private func updateVPNHint(isLoading: Bool) {
+        vpnHintTask?.cancel()
+        vpnHintTask = nil
+
+        if !isLoading {
+            withAnimation(.easeInOut(duration: 0.2)) {
+                showVPNHint = false
+            }
+            return
+        }
+
+        vpnHintTask = Task {
+            try? await Task.sleep(nanoseconds: 6_000_000_000)
+            guard !Task.isCancelled else { return }
+            guard scheduleService.isLoadingSchedule else { return }
+            await MainActor.run {
+                withAnimation(.easeInOut(duration: 0.2)) {
+                    showVPNHint = true
+                }
+            }
+        }
+    }
+}
+
+// MARK: - VPN Hint Banner
+
+struct VPNHintBanner: View {
+    var body: some View {
+        HStack(spacing: 10) {
+            Image(systemName: "globe")
+                .foregroundColor(.orange)
+            Text("Если загрузка занимает много времени, попробуйте включить VPN.")
+                .font(.caption)
+                .foregroundColor(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+            Spacer(minLength: 0)
+        }
+        .padding(12)
+        .background(
+            RoundedRectangle(cornerRadius: 12)
+                .fill(Color.orange.opacity(0.08))
+                .stroke(Color.orange.opacity(0.25), lineWidth: 1)
+        )
     }
 }
 

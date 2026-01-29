@@ -2376,14 +2376,13 @@ struct EditProfileSheet: View {
                                     GridItem(.flexible()),
                                     GridItem(.flexible())
                                 ], spacing: 12) {
-                                    ForEach(filteredFaculties.prefix(8)) { faculty in
+                                    ForEach(filteredFaculties) { faculty in
                                         FacultySelectionCard(
                                             faculty: faculty,
                                             isSelected: selectedFaculty?.id == faculty.id
                                         ) {
                                             selectedFaculty = faculty
                                             scheduleService.selectFaculty(faculty)
-                                            facultySearchText = ""
                                         }
                                     }
                                 }
@@ -2409,7 +2408,7 @@ struct EditProfileSheet: View {
                                 // Поле поиска
                                 SearchBar(text: $groupSearchText, placeholder: "Поиск группы...")
                                 
-                                if scheduleService.isLoading {
+                                if scheduleService.isLoadingGroups {
                                     HStack {
                                         Spacer()
                                         ProgressView("Загрузка...")
@@ -2423,18 +2422,17 @@ struct EditProfileSheet: View {
                                         .frame(maxWidth: .infinity, alignment: .center)
                                         .padding()
                                 } else {
-                                    // Список групп
+                                    // Список групп — показываем все карточки, не сбрасываем поиск при выборе
                                     LazyVGrid(columns: [
                                         GridItem(.flexible()),
                                         GridItem(.flexible())
                                     ], spacing: 12) {
-                                        ForEach(filteredGroups.prefix(6)) { group in
+                                        ForEach(filteredGroups) { group in
                                             GroupSelectionCard(
                                                 group: group,
                                                 isSelected: selectedGroup?.id == group.id
                                             ) {
                                                 selectedGroup = group
-                                                groupSearchText = ""
                                             }
                                         }
                                     }
@@ -2917,7 +2915,7 @@ struct GroupSelectionCard: View {
         }) {
             VStack(alignment: .leading, spacing: 8) {
                 Text(group.name)
-                    .font(.headline)
+                    .font(.subheadline)
                     .fontWeight(.semibold)
                     .foregroundColor(isSelected ? .white : .primary)
                     .lineLimit(1)

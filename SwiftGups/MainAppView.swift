@@ -46,6 +46,7 @@ struct RegistrationView: View {
     @State private var showingProgress = false
     @State private var progressStep = 0
     @State private var errorMessage: String?
+    @State private var skipFacultySelection = false // Пропуск выбора института/факультета
     @State private var skipGroupSelection = false // Пропуск выбора группы при недоступности сайта
     @FocusState private var isNameFieldFocused: Bool
     
@@ -197,11 +198,13 @@ struct RegistrationView: View {
     }
     
     private var isFormValid: Bool {
-        // Форма валидна, если введено имя, выбран факультет
-        // и выбрана группа или пользователь решил пропустить этот шаг
-        !name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty &&
-        selectedFaculty != nil &&
-        (selectedGroup != nil || skipGroupSelection)
+        // Форма валидна, если введено имя,
+        // выбран факультет (или шаг пропущен),
+        // и выбрана группа (или шаг пропущен / факультет пропущен).
+        let hasName = !name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        let hasFaculty = selectedFaculty != nil || skipFacultySelection
+        let hasGroup = selectedGroup != nil || skipGroupSelection || skipFacultySelection
+        return hasName && hasFaculty && hasGroup
     }
     
     @ViewBuilder
@@ -217,14 +220,51 @@ struct RegistrationView: View {
             )
             
             // Выбор факультета
-            FacultyPickerView(
-                selectedFaculty: $selectedFaculty,
-                searchText: $facultySearchText,
-                scheduleService: scheduleService
-            )
+            if !skipFacultySelection {
+                FacultyPickerView(
+                    selectedFaculty: $selectedFaculty,
+                    searchText: $facultySearchText,
+                    scheduleService: scheduleService
+                )
+
+                Button("Продолжить без выбора института") {
+                    skipFacultySelection = true
+                    selectedFaculty = nil
+                    selectedGroup = nil
+                    skipGroupSelection = true
+                    facultySearchText = ""
+                    searchText = ""
+                    errorMessage = nil
+                }
+                .font(.caption)
+                .foregroundColor(.blue)
+            } else {
+                // Сообщение о пропуске выбора института
+                VStack(alignment: .leading, spacing: 8) {
+                    HStack {
+                        Image(systemName: "building.2.fill")
+                            .foregroundColor(.blue)
+                        Text("Институт/Факультет")
+                            .font(.headline)
+                            .foregroundColor(.primary)
+                    }
+
+                    Text("Выбор института пропущен. Вы сможете выбрать его позже в профиле.")
+                        .font(.subheadline)
+                        .foregroundColor(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+
+                    Button("Выбрать институт") {
+                        skipFacultySelection = false
+                        skipGroupSelection = false
+                    }
+                    .font(.caption)
+                    .foregroundColor(.blue)
+                }
+            }
             
             // Выбор группы
-            if selectedFaculty != nil && !skipGroupSelection {
+            if selectedFaculty != nil && !skipGroupSelection && !skipFacultySelection {
                 GroupPickerView(
                     selectedGroup: $selectedGroup,
                     searchText: $searchText,
@@ -264,7 +304,7 @@ struct RegistrationView: View {
             }
 
             // Сообщение об ошибке
-            if let errorMessage = errorMessage, !skipGroupSelection {
+            if let errorMessage = errorMessage, !skipGroupSelection && !skipFacultySelection {
                 ErrorBanner(message: errorMessage) {
                     self.errorMessage = nil
                 }
@@ -303,9 +343,6 @@ struct RegistrationView: View {
     }
     
     private func completeRegistration() {
-        // Факультет обязателен
-        guard let faculty = selectedFaculty else { return }
-
         let trimmedName = name.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmedName.isEmpty else {
             errorMessage = "Пожалуйста, введите ваше имя"
@@ -318,11 +355,14 @@ struct RegistrationView: View {
         
         showingProgress = true
 
-        // Создаем пользователя, даже если группа не выбрана
+        let facultyId = selectedFaculty?.id ?? ""
+        let facultyName = selectedFaculty?.name ?? ""
+
+        // Создаем пользователя, даже если институт/группа не выбраны
         let newUser = User(
             name: trimmedName,
-            facultyId: faculty.id,
-            facultyName: faculty.name,
+            facultyId: facultyId,
+            facultyName: facultyName,
             groupId: selectedGroup?.id ?? "",
             groupName: selectedGroup?.name ?? ""
         )
@@ -379,6 +419,8 @@ struct FacultyPickerView: View {
     @Binding var selectedFaculty: Faculty?
     @Binding var searchText: String
     @ObservedObject var scheduleService: ScheduleService
+    @State private var showVPNHint = false
+    @State private var vpnHintTask: Task<Void, Never>?
     
     private var filteredFaculties: [Faculty] {
         scheduleService.filteredFaculties(searchText: searchText)
@@ -400,8 +442,14 @@ struct FacultyPickerView: View {
             if scheduleService.isLoadingFaculties {
                 HStack {
                     Spacer()
-                    ProgressView("Загрузка институтов...")
-                        .foregroundColor(.secondary)
+                    VStack(spacing: 10) {
+                        ProgressView("Загрузка институтов...")
+                            .foregroundColor(.secondary)
+                        if showVPNHint {
+                            VPNHintBanner()
+                                .frame(maxWidth: 360)
+                        }
+                    }
                     Spacer()
                 }
                 .padding()
@@ -416,33 +464,53 @@ struct FacultyPickerView: View {
                     .frame(maxWidth: .infinity, alignment: .center)
                     .padding()
             } else {
-                // Список институтов
+                // Список институтов — показываем все
                 LazyVGrid(columns: [
                     GridItem(.flexible()),
                     GridItem(.flexible())
                 ], spacing: 12) {
-                    ForEach(filteredFaculties.prefix(8)) { faculty in
+                    ForEach(filteredFaculties) { faculty in
                         FacultySelectionCard(
                             faculty: faculty,
                             isSelected: selectedFaculty?.id == faculty.id
                         ) {
                             selectedFaculty = faculty
                             scheduleService.selectFaculty(faculty)
-                            searchText = ""
                         }
                     }
-                }
-                
-                if filteredFaculties.count > 8 {
-                    Text("И еще \(filteredFaculties.count - 8) институтов...")
-                        .font(.caption)
-                        .foregroundColor(.secondary)
-                        .frame(maxWidth: .infinity, alignment: .center)
-                        .padding(.top, 8)
                 }
             }
             
             FacultyMissingIdBanner(missingNames: scheduleService.facultiesMissingIDs)
+        }
+        .onAppear {
+            updateVPNHint(isLoading: scheduleService.isLoadingFaculties)
+        }
+        .onChange(of: scheduleService.isLoadingFaculties) { newValue in
+            updateVPNHint(isLoading: newValue)
+        }
+    }
+
+    private func updateVPNHint(isLoading: Bool) {
+        vpnHintTask?.cancel()
+        vpnHintTask = nil
+
+        if !isLoading {
+            withAnimation(.easeInOut(duration: 0.2)) {
+                showVPNHint = false
+            }
+            return
+        }
+
+        vpnHintTask = Task {
+            try? await Task.sleep(nanoseconds: 6_000_000_000)
+            guard !Task.isCancelled else { return }
+            guard scheduleService.isLoadingFaculties else { return }
+            await MainActor.run {
+                withAnimation(.easeInOut(duration: 0.2)) {
+                    showVPNHint = true
+                }
+            }
         }
     }
 }
@@ -451,6 +519,8 @@ struct GroupPickerView: View {
     @Binding var selectedGroup: Group?
     @Binding var searchText: String
     @ObservedObject var scheduleService: ScheduleService
+    @State private var showVPNHint = false
+    @State private var vpnHintTask: Task<Void, Never>?
     
     private var filteredGroups: [Group] {
         scheduleService.filteredGroups(searchText: searchText)
@@ -469,11 +539,17 @@ struct GroupPickerView: View {
             // Поле поиска
             SearchBar(text: $searchText, placeholder: "Поиск группы...")
             
-            if scheduleService.isLoading {
+            if scheduleService.isLoadingGroups {
                 HStack {
                     Spacer()
-                    ProgressView("Загрузка групп...")
-                        .foregroundColor(.secondary)
+                    VStack(spacing: 10) {
+                        ProgressView("Загрузка групп...")
+                            .foregroundColor(.secondary)
+                        if showVPNHint {
+                            VPNHintBanner()
+                                .frame(maxWidth: 360)
+                        }
+                    }
                     Spacer()
                 }
                 .padding()
@@ -488,23 +564,43 @@ struct GroupPickerView: View {
                     GridItem(.flexible()),
                     GridItem(.flexible())
                 ], spacing: 12) {
-                    ForEach(filteredGroups.prefix(6)) { group in
+                    ForEach(filteredGroups) { group in
                         GroupSelectionCard(
                             group: group,
                             isSelected: selectedGroup?.id == group.id
                         ) {
                             selectedGroup = group
-                            searchText = ""
                         }
                     }
                 }
-                
-                if filteredGroups.count > 6 {
-                    Text("И еще \(filteredGroups.count - 6) групп...")
-                        .font(.caption)
-                        .foregroundColor(.secondary)
-                        .frame(maxWidth: .infinity, alignment: .center)
-                        .padding(.top, 8)
+            }
+        }
+        .onAppear {
+            updateVPNHint(isLoading: scheduleService.isLoadingGroups)
+        }
+        .onChange(of: scheduleService.isLoadingGroups) { newValue in
+            updateVPNHint(isLoading: newValue)
+        }
+    }
+
+    private func updateVPNHint(isLoading: Bool) {
+        vpnHintTask?.cancel()
+        vpnHintTask = nil
+
+        if !isLoading {
+            withAnimation(.easeInOut(duration: 0.2)) {
+                showVPNHint = false
+            }
+            return
+        }
+
+        vpnHintTask = Task {
+            try? await Task.sleep(nanoseconds: 6_000_000_000)
+            guard !Task.isCancelled else { return }
+            guard scheduleService.isLoadingGroups else { return }
+            await MainActor.run {
+                withAnimation(.easeInOut(duration: 0.2)) {
+                    showVPNHint = true
                 }
             }
         }
