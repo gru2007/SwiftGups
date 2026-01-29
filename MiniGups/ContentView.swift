@@ -14,6 +14,7 @@ import UIKit
 // MARK: - Root
 
 struct ContentView: View {
+    @Environment(\.horizontalSizeClass) private var horizontalSizeClass
     @StateObject private var scheduleService = MiniScheduleService()
     @State private var searchText = ""
     @State private var showDatePicker = false
@@ -25,6 +26,9 @@ struct ContentView: View {
     private var shouldShowFullAppPromo: Bool {
         !dismissedFullAppPromoBanner && successfulScheduleLoads > 0
     }
+
+    /// Максимальная ширина контента на iPad для удобного чтения.
+    private static let iPadContentMaxWidth: CGFloat = 620
 
     var body: some View {
         NavigationView {
@@ -77,11 +81,14 @@ struct ContentView: View {
                     }
                     .padding(.horizontal, 16)
                     .padding(.vertical, 14)
+                    .frame(maxWidth: horizontalSizeClass == .regular ? Self.iPadContentMaxWidth : nil)
+                    .frame(maxWidth: .infinity)
                 }
             }
             .navigationTitle("MiniGups")
             .navigationBarTitleDisplayMode(.inline)
         }
+        .navigationViewStyle(.stack)
         .sheet(isPresented: $showDatePicker) {
             MiniDatePickerSheet(selectedDate: $scheduleService.selectedDate) {
                 scheduleService.selectDate(scheduleService.selectedDate)
