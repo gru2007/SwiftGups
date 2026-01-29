@@ -10,7 +10,18 @@
 		4416D4E62F12609200B1C537 /* FLEX in Frameworks */ = {isa = PBXBuildFile; productRef = 4416D4E52F12609200B1C537 /* FLEX */; };
 		4435B8CB2F29F22000AB3B6C /* AlertKit in Frameworks */ = {isa = PBXBuildFile; productRef = 4435B8CA2F29F22000AB3B6C /* AlertKit */; };
 		44B000072E5C14D200EE0207 /* SwiftGupsWidget.appex in Embed App Extensions */ = {isa = PBXBuildFile; fileRef = 44B000012E5C14D200EE0201 /* SwiftGupsWidget.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
+		44B42EB92F2B48FF00599598 /* MiniGups.app in Embed App Clips */ = {isa = PBXBuildFile; fileRef = 44B42EAD2F2B48FD00599598 /* MiniGups.app */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
 /* End PBXBuildFile section */
+
+/* Begin PBXContainerItemProxy section */
+		44B42EB72F2B48FF00599598 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 44A82CB32E5C14D200EE0119 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = 44B42EAC2F2B48FD00599598;
+			remoteInfo = MiniGups;
+		};
+/* End PBXContainerItemProxy section */
 
 /* Begin PBXCopyFilesBuildPhase section */
 		44B000062E5C14D200EE0206 /* Embed App Extensions */ = {
@@ -24,11 +35,23 @@
 			name = "Embed App Extensions";
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		44B42EBA2F2B48FF00599598 /* Embed App Clips */ = {
+			isa = PBXCopyFilesBuildPhase;
+			buildActionMask = 2147483647;
+			dstPath = "$(CONTENTS_FOLDER_PATH)/AppClips";
+			dstSubfolderSpec = 16;
+			files = (
+				44B42EB92F2B48FF00599598 /* MiniGups.app in Embed App Clips */,
+			);
+			name = "Embed App Clips";
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXCopyFilesBuildPhase section */
 
 /* Begin PBXFileReference section */
 		44A82CBB2E5C14D200EE0119 /* SwiftGups.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = SwiftGups.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		44B000012E5C14D200EE0201 /* SwiftGupsWidget.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = SwiftGupsWidget.appex; sourceTree = BUILT_PRODUCTS_DIR; };
+		44B42EAD2F2B48FD00599598 /* MiniGups.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = MiniGups.app; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
@@ -45,6 +68,13 @@
 				Info.plist,
 			);
 			target = 44B000022E5C14D200EE0202 /* SwiftGupsWidget */;
+		};
+		44B42EBE2F2B48FF00599598 /* Exceptions for "MiniGups" folder in "MiniGups" target */ = {
+			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
+			membershipExceptions = (
+				Info.plist,
+			);
+			target = 44B42EAC2F2B48FD00599598 /* MiniGups */;
 		};
 /* End PBXFileSystemSynchronizedBuildFileExceptionSet section */
 
@@ -63,6 +93,14 @@
 				44B000082E5C14D500EE0208 /* Exceptions for "SwiftGupsWidget" folder in "SwiftGupsWidget" target */,
 			);
 			path = SwiftGupsWidget;
+			sourceTree = "<group>";
+		};
+		44B42EAE2F2B48FD00599598 /* MiniGups */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			exceptions = (
+				44B42EBE2F2B48FF00599598 /* Exceptions for "MiniGups" folder in "MiniGups" target */,
+			);
+			path = MiniGups;
 			sourceTree = "<group>";
 		};
 /* End PBXFileSystemSynchronizedRootGroup section */
@@ -84,6 +122,13 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		44B42EAA2F2B48FD00599598 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXFrameworksBuildPhase section */
 
 /* Begin PBXGroup section */
@@ -92,6 +137,7 @@
 			children = (
 				44A82CBD2E5C14D200EE0119 /* SwiftGups */,
 				44B000092E5C14D200EE0209 /* SwiftGupsWidget */,
+				44B42EAE2F2B48FD00599598 /* MiniGups */,
 				44A82CBC2E5C14D200EE0119 /* Products */,
 			);
 			sourceTree = "<group>";
@@ -101,6 +147,7 @@
 			children = (
 				44A82CBB2E5C14D200EE0119 /* SwiftGups.app */,
 				44B000012E5C14D200EE0201 /* SwiftGupsWidget.appex */,
+				44B42EAD2F2B48FD00599598 /* MiniGups.app */,
 			);
 			name = Products;
 			sourceTree = "<group>";
@@ -116,10 +163,12 @@
 				44A82CB82E5C14D200EE0119 /* Frameworks */,
 				44A82CB92E5C14D200EE0119 /* Resources */,
 				44B000062E5C14D200EE0206 /* Embed App Extensions */,
+				44B42EBA2F2B48FF00599598 /* Embed App Clips */,
 			);
 			buildRules = (
 			);
 			dependencies = (
+				44B42EB82F2B48FF00599598 /* PBXTargetDependency */,
 			);
 			fileSystemSynchronizedGroups = (
 				44A82CBD2E5C14D200EE0119 /* SwiftGups */,
@@ -153,6 +202,28 @@
 			productReference = 44B000012E5C14D200EE0201 /* SwiftGupsWidget.appex */;
 			productType = "com.apple.product-type.app-extension";
 		};
+		44B42EAC2F2B48FD00599598 /* MiniGups */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 44B42EBD2F2B48FF00599598 /* Build configuration list for PBXNativeTarget "MiniGups" */;
+			buildPhases = (
+				44B42EA92F2B48FD00599598 /* Sources */,
+				44B42EAA2F2B48FD00599598 /* Frameworks */,
+				44B42EAB2F2B48FD00599598 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			fileSystemSynchronizedGroups = (
+				44B42EAE2F2B48FD00599598 /* MiniGups */,
+			);
+			name = MiniGups;
+			packageProductDependencies = (
+			);
+			productName = MiniGups;
+			productReference = 44B42EAD2F2B48FD00599598 /* MiniGups.app */;
+			productType = "com.apple.product-type.application.on-demand-install-capable";
+		};
 /* End PBXNativeTarget section */
 
 /* Begin PBXProject section */
@@ -160,7 +231,7 @@
 			isa = PBXProject;
 			attributes = {
 				BuildIndependentTargetsInParallel = 1;
-				LastSwiftUpdateCheck = 1640;
+				LastSwiftUpdateCheck = 2600;
 				LastUpgradeCheck = 1640;
 				TargetAttributes = {
 					44A82CBA2E5C14D200EE0119 = {
@@ -168,6 +239,9 @@
 					};
 					44B000022E5C14D200EE0202 = {
 						CreatedOnToolsVersion = 16.4;
+					};
+					44B42EAC2F2B48FD00599598 = {
+						CreatedOnToolsVersion = 26.0;
 					};
 				};
 			};
@@ -192,6 +266,7 @@
 			targets = (
 				44A82CBA2E5C14D200EE0119 /* SwiftGups */,
 				44B000022E5C14D200EE0202 /* SwiftGupsWidget */,
+				44B42EAC2F2B48FD00599598 /* MiniGups */,
 			);
 		};
 /* End PBXProject section */
@@ -205,6 +280,13 @@
 			runOnlyForDeploymentPostprocessing = 0;
 		};
 		44B000052E5C14D200EE0205 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		44B42EAB2F2B48FD00599598 /* Resources */ = {
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
@@ -228,7 +310,22 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		44B42EA92F2B48FD00599598 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXSourcesBuildPhase section */
+
+/* Begin PBXTargetDependency section */
+		44B42EB82F2B48FF00599598 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = 44B42EAC2F2B48FD00599598 /* MiniGups */;
+			targetProxy = 44B42EB72F2B48FF00599598 /* PBXContainerItemProxy */;
+		};
+/* End PBXTargetDependency section */
 
 /* Begin XCBuildConfiguration section */
 		44A82CCA2E5C14D500EE0119 /* Debug */ = {
@@ -257,7 +354,7 @@
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				MARKETING_VERSION = 2.0;
+				MARKETING_VERSION = 2.1;
 				PRODUCT_BUNDLE_IDENTIFIER = tech.artemev.swiftgups;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SWIFT_EMIT_LOC_STRINGS = YES;
@@ -293,7 +390,7 @@
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				MARKETING_VERSION = 2.0;
+				MARKETING_VERSION = 2.1;
 				PRODUCT_BUNDLE_IDENTIFIER = tech.artemev.swiftgups;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SWIFT_EMIT_LOC_STRINGS = YES;
@@ -471,6 +568,80 @@
 			};
 			name = Release;
 		};
+		44B42EBB2F2B48FF00599598 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				CODE_SIGN_ENTITLEMENTS = MiniGups/MiniGups.entitlements;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = C4L8Q37YC4;
+				ENABLE_PREVIEWS = YES;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = MiniGups/Info.plist;
+				INFOPLIST_KEY_CFBundleDisplayName = SwiftGups;
+				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.education";
+				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
+				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
+				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
+				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad = "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
+				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone = "UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				MARKETING_VERSION = 2.1;
+				PRODUCT_BUNDLE_IDENTIFIER = tech.artemev.swiftgups.Clip;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				STRING_CATALOG_GENERATE_SYMBOLS = YES;
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Debug;
+		};
+		44B42EBC2F2B48FF00599598 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				CODE_SIGN_ENTITLEMENTS = MiniGups/MiniGups.entitlements;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = C4L8Q37YC4;
+				ENABLE_PREVIEWS = YES;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = MiniGups/Info.plist;
+				INFOPLIST_KEY_CFBundleDisplayName = SwiftGups;
+				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.education";
+				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
+				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
+				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
+				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad = "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
+				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone = "UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				MARKETING_VERSION = 2.1;
+				PRODUCT_BUNDLE_IDENTIFIER = tech.artemev.swiftgups.Clip;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				STRING_CATALOG_GENERATE_SYMBOLS = YES;
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Release;
+		};
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
@@ -497,6 +668,15 @@
 			buildConfigurations = (
 				44B0000B2E5C14D500EE020B /* Debug */,
 				44B0000C2E5C14D500EE020C /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		44B42EBD2F2B48FF00599598 /* Build configuration list for PBXNativeTarget "MiniGups" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				44B42EBB2F2B48FF00599598 /* Debug */,
+				44B42EBC2F2B48FF00599598 /* Release */,
 			);
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;
