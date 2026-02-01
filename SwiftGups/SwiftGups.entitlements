@@ -11,6 +11,7 @@
 	<key>com.apple.developer.associated-domains</key>
 	<array>
 		<string>appclips:clipcards.r-artemev.ru</string>
+		<string>appclips:gups.r-artemev.ru</string>
 		<string>applinks:clipcards.r-artemev.ru</string>
 	</array>
 	<key>com.apple.developer.icloud-container-identifiers</key>

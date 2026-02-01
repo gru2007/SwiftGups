@@ -2,6 +2,11 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
+	<key>com.apple.developer.associated-domains</key>
+	<array>
+		<string>appclips:clipcards.r-artemev.ru</string>
+		<string>appclips:gups.r-artemev.ru</string>
+	</array>
 	<key>com.apple.developer.parent-application-identifiers</key>
 	<array>
 		<string>$(AppIdentifierPrefix)tech.artemev.swiftgups</string>
