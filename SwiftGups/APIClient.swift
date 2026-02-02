@@ -28,7 +28,7 @@ enum APIError: Error, LocalizedError {
         case .facultyNotFound:
             return "Факультет не найден"
         case .vpnOrBlockedNetwork:
-            return "Не удалось подключиться к серверу. Возможно включен VPN или сеть блокирует доступ к dvgups.ru. Отключите VPN/смените сервер и повторите попытку."
+            return "Не удалось подключиться к серверу. Возможно включен VPN или сеть блокирует доступ к dvgups.ru. Отключите VPN и повторите попытку."
         }
     }
 }

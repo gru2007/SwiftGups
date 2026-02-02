@@ -15,8 +15,12 @@ final class AppNewsService: ObservableObject {
     }
     
     func loadIfNeeded() async {
-        if feed != nil { return }
-        await refresh(force: false)
+        if feed == nil {
+            await refresh(force: false)
+        } else {
+            // Фоновая подгрузка свежей ленты при каждом открытии вкладки (чтобы новый баннер появился после обновления JSON на сервере)
+            Task { await refresh(force: true) }
+        }
     }
     
     func refresh(force: Bool) async {
@@ -26,29 +30,40 @@ final class AppNewsService: ObservableObject {
         errorMessage = nil
         defer { isLoading = false }
         
-        guard let url = AppNewsService.feedURL() else {
-            errorMessage = "Не задан URL ленты новостей. Укажите APP_NEWS_FEED_URL в Info.plist."
-            return
-        }
-        
-        var request = URLRequest(url: url)
-        request.timeoutInterval = 25
-        request.cachePolicy = force ? .reloadIgnoringLocalCacheData : .useProtocolCachePolicy
-        
-        do {
-            let (data, response) = try await session.data(for: request)
-            guard let http = response as? HTTPURLResponse, (200...299).contains(http.statusCode) else {
-                errorMessage = "Ошибка загрузки новостей (сервер)."
+        if let url = AppNewsService.feedURL() {
+            var request = URLRequest(url: url)
+            request.timeoutInterval = 25
+            request.cachePolicy = force ? .reloadIgnoringLocalCacheData : .useProtocolCachePolicy
+            
+            do {
+                let (data, response) = try await session.data(for: request)
+                guard let http = response as? HTTPURLResponse, (200...299).contains(http.statusCode) else {
+                    try? await loadFromBundle()
+                    return
+                }
+                let decoded = try decoder.decode(AppNewsFeed.self, from: data)
+                self.feed = decoded
+                return
+            } catch {
+                // При ошибке сети пробуем локальный app-news.json из бандла (для разработки или офлайн)
+                try? await loadFromBundle()
+                if feed == nil { errorMessage = error.localizedDescription }
                 return
             }
-            
-            let decoded = try decoder.decode(AppNewsFeed.self, from: data)
-            self.feed = decoded
-        } catch {
-            errorMessage = error.localizedDescription
+        }
+        try? await loadFromBundle()
+        if feed == nil {
+            errorMessage = "Не задан URL ленты новостей. Укажите APP_NEWS_FEED_URL в Info.plist или добавьте app-news.json в бандл."
         }
     }
     
+    private func loadFromBundle() async throws {
+        guard let url = Bundle.main.url(forResource: "app-news", withExtension: "json") else { return }
+        let data = try Data(contentsOf: url)
+        let decoded = try decoder.decode(AppNewsFeed.self, from: data)
+        self.feed = decoded
+    }
+
     private static func feedURL() -> URL? {
         guard
             let value = Bundle.main.object(forInfoDictionaryKey: "APP_NEWS_FEED_URL") as? String

@@ -597,6 +597,7 @@ struct ScheduleDisplayView: View {
             } else if let schedule = scheduleService.currentSchedule {
                 ScheduleMainView(
                     schedule: schedule,
+                    displayGroupName: scheduleService.selectedGroup?.name,
                     selectedDate: scheduleService.selectedDate,
                     viewMode: viewMode
                 )
@@ -611,11 +612,17 @@ struct ScheduleDisplayView: View {
 
 struct ScheduleMainView: View {
     let schedule: Schedule
+    /// Предпочтительное название группы (выбранная пользователем); если nil — используется schedule.groupName из API
+    var displayGroupName: String? = nil
     let selectedDate: Date
     let viewMode: ScheduleViewMode
     
     private let calendar = Calendar.current
     @State private var selectedLesson: Lesson? = nil
+    
+    private var groupNameToShow: String {
+        displayGroupName ?? schedule.groupName
+    }
     
     private var daysSorted: [ScheduleDay] {
         schedule.days.sorted(by: { $0.date < $1.date })
@@ -642,7 +649,7 @@ struct ScheduleMainView: View {
             // Компактный заголовок
             HStack(alignment: .firstTextBaseline) {
                 VStack(alignment: .leading, spacing: 2) {
-                    Text(schedule.groupName)
+                    Text(groupNameToShow)
                         .font(.headline)
                         .foregroundColor(.primary)
                         .lineLimit(1)

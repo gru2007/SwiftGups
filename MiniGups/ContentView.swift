@@ -693,6 +693,7 @@ private struct MiniScheduleDisplayCard: View {
             } else if let schedule = scheduleService.currentSchedule {
                 MiniScheduleMainView(
                     schedule: schedule,
+                    displayGroupName: scheduleService.selectedGroup?.name,
                     selectedDate: scheduleService.selectedDate,
                     viewMode: viewMode
                 )
@@ -837,6 +838,8 @@ private struct MiniEmptyScheduleView: View {
 
 private struct MiniScheduleMainView: View {
     let schedule: Schedule
+    /// Предпочтительное название группы (выбранная пользователем); если nil — используется schedule.groupName из API
+    var displayGroupName: String? = nil
     let selectedDate: Date
     let viewMode: MiniScheduleViewMode
 
@@ -853,6 +856,10 @@ private struct MiniScheduleMainView: View {
 
     private func dayKey(_ date: Date) -> String {
         DateFormatter.serverDateFormatter.string(from: date)
+    }
+
+    private var groupNameToShow: String {
+        displayGroupName ?? schedule.groupName
     }
 
     private static let shortDateFormatter: DateFormatter = {
@@ -875,7 +882,7 @@ private struct MiniScheduleMainView: View {
         VStack(alignment: .leading, spacing: 12) {
             HStack(alignment: .firstTextBaseline) {
                 VStack(alignment: .leading, spacing: 2) {
-                    Text(schedule.groupName)
+                    Text(groupNameToShow)
                         .font(.headline)
                         .lineLimit(1)
 
@@ -1740,7 +1747,7 @@ enum APIError: Error, LocalizedError {
         case .invalidResponse:
             return "Неверный формат ответа сервера"
         case .vpnOrBlockedNetwork:
-            return "Не удалось подключиться к серверу. Возможно включен VPN или сеть блокирует доступ к dvgups.ru. Отключите VPN/смените сеть и повторите попытку."
+            return "Не удалось подключиться к серверу. Возможно включен VPN или сеть блокирует доступ к dvgups.ru. Отключите VPN и повторите попытку."
         }
     }
 }

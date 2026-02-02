@@ -456,7 +456,7 @@ struct AboutSheet: View {
                     .padding(.horizontal)
                 
                 VStack(alignment: .leading, spacing: 8) {
-                    Text("Версия 2.0")
+                    Text("Версия 2")
                     Text("Неофициальное приложение по ДВГУПС. Создано с ❤️ и SwiftUI.")
                         .foregroundColor(.secondary)
                     Text("Источник данных: dvgups.ru")
