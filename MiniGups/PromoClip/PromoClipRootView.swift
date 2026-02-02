@@ -1,5 +1,6 @@
 import SwiftUI
 import UIKit
+import WebKit
 
 struct PromoClipRootView: View {
     let invocationURL: URL?
@@ -36,7 +37,7 @@ private struct PromoHomeView: View {
 
                     PromoCTAButton(
                         title: "Забронировать никнейм",
-                        subtitle: "Откроем регистрацию прямо здесь (WebView)",
+                        subtitle: "Откроем регистрацию в приложении",
                         systemImage: "person.badge.plus",
                         tint: .green
                     ) {
@@ -60,7 +61,7 @@ private struct PromoHomeView: View {
             .navigationBarTitleDisplayMode(.inline)
         }
         .sheet(isPresented: $showRegister) {
-            PromoWebSheet(title: "Регистрация", url: registerURL)
+            SafariView(url: registerURL)
         }
     }
 }
@@ -68,18 +69,64 @@ private struct PromoHomeView: View {
 private struct PromoMapView: View {
     let invocationURL: URL?
 
-    @State private var isLoading = true
-    @State private var error: String?
+    @State private var showMap = false
 
     private var mapURL: URL { PromoLinks.mapURL(from: invocationURL) }
 
     var body: some View {
         NavigationView {
-            ZStack {
-                MiniWebView(url: mapURL, prefersEphemeralSession: true, isLoading: $isLoading, lastError: $error)
-                    .ignoresSafeArea(edges: .bottom)
+            PromoMapContent(mapURL: mapURL, showMap: $showMap)
+                .fullScreenCover(isPresented: $showMap) {
+                    SafariView(url: mapURL)
+                }
+                .background(
+                    LinearGradient(
+                        colors: [Color.green.opacity(0.10), Color.blue.opacity(0.08), Color(.systemBackground)],
+                        startPoint: .topLeading,
+                        endPoint: .bottomTrailing
+                    )
+                    .ignoresSafeArea()
+                )
+                .navigationTitle("3D карта (Прошлый Сезон)")
+                .navigationBarTitleDisplayMode(NavigationBarItem.TitleDisplayMode.inline)
+                .toolbar {
+                    ToolbarItem(placement: .navigationBarTrailing) {
+                        Button {
+                            UIApplication.shared.open(mapURL)
+                        } label: {
+                            Image(systemName: "safari")
+                        }
+                        .accessibilityLabel(Text("Открыть в Safari"))
+                    }
+                }
+        }
+    }
+}
 
-                if isLoading {
+@ViewBuilder
+private func PromoMapContent(mapURL: URL, showMap: Binding<Bool>) -> some View {
+    if #available(iOS 26.0, *) {
+        PromoMapWebView(url: mapURL)
+    } else {
+        PromoMapFallback(mapURL: mapURL, showMap: showMap)
+    }
+}
+
+/// Карта через новый WebKit for SwiftUI (iOS 26+): нативный WebView без UIKit-обёртки.
+@available(iOS 26.0, *)
+private struct PromoMapWebView: View {
+    let url: URL
+
+    @State private var page = WebPage()
+
+    var body: some View {
+        ZStack(alignment: .top) {
+            WebView(page)
+                .ignoresSafeArea(edges: .bottom)
+
+            VStack(spacing: 10) {
+
+                if page.estimatedProgress < 1.0 {
                     VStack(spacing: 10) {
                         ProgressView()
                         Text("Загрузка карты…")
@@ -89,105 +136,37 @@ private struct PromoMapView: View {
                     .padding(14)
                     .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 14))
                 }
-
-                if let error {
-                    VStack(spacing: 10) {
-                        Image(systemName: "wifi.exclamationmark")
-                            .font(.system(size: 22))
-                            .foregroundColor(.orange)
-                        Text(error)
-                            .font(.footnote)
-                            .foregroundColor(.secondary)
-                            .multilineTextAlignment(.center)
-                            .lineLimit(4)
-                        Button("Открыть в Safari") {
-                            UIApplication.shared.open(mapURL)
-                        }
-                        .fontWeight(.semibold)
-                    }
-                    .padding(16)
-                    .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 16))
-                    .padding(16)
-                }
+                Spacer(minLength: 0)
             }
-            .navigationTitle("3D карта")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .navigationBarTrailing) {
-                    Button {
-                        UIApplication.shared.open(mapURL)
-                    } label: {
-                        Image(systemName: "safari")
-                    }
-                    .accessibilityLabel(Text("Открыть в Safari"))
-                }
-            }
+        }
+        .onAppear {
+            page.load(URLRequest(url: url))
         }
     }
 }
 
-private struct PromoWebSheet: View {
-    let title: String
-    let url: URL
-
-    @Environment(\.dismiss) private var dismiss
-    @State private var isLoading = true
-    @State private var error: String?
+/// Fallback для iOS 17–25: кнопка открывает карту в SFSafariViewController.
+private struct PromoMapFallback: View {
+    let mapURL: URL
+    @Binding var showMap: Bool
 
     var body: some View {
-        NavigationView {
-            ZStack {
-                MiniWebView(url: url, prefersEphemeralSession: true, isLoading: $isLoading, lastError: $error)
-                    .ignoresSafeArea(edges: .bottom)
-
-                if isLoading {
-                    VStack(spacing: 10) {
-                        ProgressView()
-                        Text("Загрузка…")
-                            .font(.footnote)
-                            .foregroundColor(.secondary)
-                    }
-                    .padding(14)
-                    .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 14))
-                }
-
-                if let error {
-                    VStack(spacing: 10) {
-                        Image(systemName: "exclamationmark.triangle.fill")
-                            .foregroundColor(.orange)
-                        Text(error)
-                            .font(.footnote)
-                            .foregroundColor(.secondary)
-                            .multilineTextAlignment(.center)
-                            .lineLimit(4)
-                        Button("Открыть в Safari") {
-                            UIApplication.shared.open(url)
-                        }
-                        .fontWeight(.semibold)
-                    }
-                    .padding(16)
-                    .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 16))
-                    .padding(16)
+        ScrollView {
+            VStack(spacing: 16) {
+                PromoCTAButton(
+                    title: "Открыть 3D карту",
+                    subtitle: "Карта откроется в приложении",
+                    systemImage: "map.fill",
+                    tint: .green
+                ) {
+                    showMap = true
                 }
             }
-            .navigationTitle(title)
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .cancellationAction) {
-                    Button("Закрыть") { dismiss() }
-                }
-                ToolbarItem(placement: .navigationBarTrailing) {
-                    Button {
-                        UIApplication.shared.open(url)
-                    } label: {
-                        Image(systemName: "safari")
-                    }
-                    .accessibilityLabel(Text("Открыть в Safari"))
-                }
-            }
+            .padding(16)
         }
     }
 }
+
 
 private struct PromoHeroCard: View {
     var body: some View {
