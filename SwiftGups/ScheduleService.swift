@@ -12,6 +12,21 @@ class ScheduleService: ObservableObject {
     @Published var currentSchedule: Schedule?
     @Published var selectedDate: Date = Date()
     
+    enum DataSource: Equatable {
+        case network
+        case cache
+    }
+    
+    /// Источник данных для текущего расписания (для UI баннера "Оффлайн").
+    @Published var scheduleDataSource: DataSource = .network
+    
+    enum ScheduleNotice: Equatable {
+        case timeout(seconds: Int)
+    }
+    
+    /// Доп. уведомление (например, timeout 8 сек), показываем в верхней плашке.
+    @Published var scheduleNotice: ScheduleNotice? = nil
+    
     @Published var isLoadingFaculties = false
     @Published var isLoadingGroups = false
     @Published var isLoadingSchedule = false
@@ -21,6 +36,19 @@ class ScheduleService: ObservableObject {
     
     private let apiClient: DVGUPSAPIClient
     private var didLoadFaculties = false
+    private let cache = ScheduleCacheStore()
+
+    private static func isCancelled(_ error: Error) -> Bool {
+        if let urlError = error as? URLError, urlError.code == .cancelled {
+            return true
+        }
+        if let apiError = error as? APIError, case .networkError(let underlying) = apiError {
+            if let urlError = underlying as? URLError, urlError.code == .cancelled {
+                return true
+            }
+        }
+        return false
+    }
     
     init() {
         self.apiClient = DVGUPSAPIClient()
@@ -49,6 +77,9 @@ class ScheduleService: ObservableObject {
             facultiesMissingIDs = result.missingIdNames
             didLoadFaculties = true
             
+            // Кэшируем для оффлайн-режима
+            cache.write(faculties, for: .faculties)
+            
             // Выбор дефолтного института (если ещё ничего не выбрано)
             if selectedFaculty == nil {
                 selectedFaculty = faculties.first(where: { $0.id == "2" }) ?? faculties.first
@@ -57,11 +88,18 @@ class ScheduleService: ObservableObject {
                 selectedFaculty = faculties.first(where: { $0.id == selected.id }) ?? selectedFaculty
             }
         } catch {
-            // По ТЗ: статический список больше не актуален — не используем его.
-            // Оставляем то, что уже было загружено ранее (если было), иначе — пустой список.
-            facultiesMissingIDs = []
-            didLoadFaculties = true
-            errorMessage = error.localizedDescription
+            // Оффлайн: пробуем показать то, что было сохранено ранее.
+            if let cached: [Faculty] = cache.read([Faculty].self, for: .faculties), !cached.isEmpty {
+                faculties = cached
+                facultiesMissingIDs = []
+                didLoadFaculties = true
+                errorMessage = nil
+            } else {
+                // По ТЗ: статический список больше не актуален — не используем его.
+                facultiesMissingIDs = []
+                didLoadFaculties = true
+                errorMessage = error.localizedDescription
+            }
         }
         
         isLoadingFaculties = false
@@ -77,6 +115,7 @@ class ScheduleService: ObservableObject {
         print("🔄 ScheduleService.loadGroups() started for faculty: \(faculty.id) (\(faculty.name))")
         isLoadingGroups = true
         errorMessage = nil
+        defer { isLoadingGroups = false }
         
         do {
             let fetchedGroups = try await apiClient.fetchGroups(for: faculty.id)
@@ -84,26 +123,34 @@ class ScheduleService: ObservableObject {
             groups = fetchedGroups
             selectedGroup = nil // Сбрасываем выбранную группу
             
+            cache.write(groups, for: .groups(facultyId: faculty.id))
+            
             if fetchedGroups.isEmpty {
                 print("⚠️ No groups found for faculty \(faculty.id)")
                 errorMessage = "Группы для данного факультета не найдены"
             }
         } catch {
+            if Self.isCancelled(error) {
+                // Не показываем "отменено" пользователю, просто выходим.
+                print("⚠️ loadGroups cancelled")
+                return
+            }
             print("❌ Error fetching groups: \(error.localizedDescription)")
-            if let apiError = error as? APIError {
-                print("❌ API Error details: \(apiError)")
-                if case .vpnOrBlockedNetwork = apiError {
+            // Оффлайн: пробуем кэш групп по факультету
+            if let cached: [Group] = cache.read([Group].self, for: .groups(facultyId: faculty.id)), !cached.isEmpty {
+                groups = cached
+                errorMessage = nil
+            } else {
+                if let apiError = error as? APIError {
+                    print("❌ API Error details: \(apiError)")
                     errorMessage = apiError.localizedDescription
                 } else {
-                    errorMessage = apiError.localizedDescription
+                    errorMessage = error.localizedDescription
                 }
-            } else {
-                errorMessage = error.localizedDescription
+                groups = []
             }
-            groups = []
         }
-        
-        isLoadingGroups = false
+
         print("🏁 ScheduleService.loadGroups() finished. Groups count: \(groups.count)")
     }
     
@@ -150,7 +197,14 @@ class ScheduleService: ObservableObject {
                 endDate: selectedDate.addingTimeInterval(7 * 24 * 60 * 60) // Неделя
             )
             currentSchedule = schedule
+            scheduleDataSource = .network
+            scheduleNotice = nil
         } catch {
+            if let apiError = error as? APIError, case .requestTimedOut(let seconds) = apiError {
+                scheduleNotice = .timeout(seconds: seconds)
+            } else {
+                scheduleNotice = nil
+            }
             errorMessage = error.localizedDescription
             currentSchedule = nil
         }
@@ -170,7 +224,14 @@ class ScheduleService: ObservableObject {
                 endDate: endDate
             )
             currentSchedule = schedule
+            scheduleDataSource = .network
+            scheduleNotice = nil
         } catch {
+            if let apiError = error as? APIError, case .requestTimedOut(let seconds) = apiError {
+                scheduleNotice = .timeout(seconds: seconds)
+            } else {
+                scheduleNotice = nil
+            }
             errorMessage = error.localizedDescription
             currentSchedule = nil
         }
@@ -184,7 +245,10 @@ class ScheduleService: ObservableObject {
         selectedFaculty = faculty
         selectedGroup = nil
         currentSchedule = nil
+        scheduleDataSource = .network
+        scheduleNotice = nil
         groups = []
+        isLoadingGroups = true
         
         Task {
             await loadGroups()
@@ -195,6 +259,9 @@ class ScheduleService: ObservableObject {
     func selectGroup(_ group: Group) {
         selectedGroup = group
         currentSchedule = nil
+        scheduleDataSource = .network
+        scheduleNotice = nil
+        isLoadingSchedule = true
         
         Task {
             await loadWeekSchedule() // Загружаем расписание на всю неделю
@@ -209,6 +276,7 @@ class ScheduleService: ObservableObject {
             // Группы менять не нужно при смене недели — состав групп не зависит от даты
             // Поэтому перезагружаем только расписание, если группа выбрана
             if selectedGroup != nil {
+                await MainActor.run { self.isLoadingSchedule = true }
                 await loadWeekSchedule()
             }
         }
@@ -219,6 +287,8 @@ class ScheduleService: ObservableObject {
         selectedFaculty = nil
         selectedGroup = nil
         currentSchedule = nil
+        scheduleDataSource = .network
+        scheduleNotice = nil
         groups = []
         errorMessage = nil
     }
@@ -267,6 +337,7 @@ class ScheduleService: ObservableObject {
         isLoadingSchedule = true
         errorMessage = nil
         print("📆 Loading week schedule for group: \(group.id) from \(DateFormatter.apiDateFormatter.string(from: startOfWeek)) to \(DateFormatter.apiDateFormatter.string(from: endOfWeek))")
+        defer { isLoadingSchedule = false }
         
         do {
             let schedule = try await apiClient.fetchSchedule(
@@ -275,14 +346,41 @@ class ScheduleService: ObservableObject {
                 endDate: endOfWeek
             )
             currentSchedule = schedule
+            scheduleDataSource = .network
+            scheduleNotice = nil
+            
+            let keyDate = DateFormatter.serverDateFormatter.string(from: startOfWeek)
+            cache.write(schedule, for: .schedule(groupId: group.id, weekStart: keyDate))
             print("✅ Week schedule loaded: days=\(schedule.days.count) group=\(schedule.groupName)")
         } catch {
-            errorMessage = error.localizedDescription
-            currentSchedule = nil
-            print("❌ Failed to load week schedule: \(error.localizedDescription)")
+            if Self.isCancelled(error) {
+                print("⚠️ loadWeekSchedule cancelled")
+                return
+            }
+            let keyDate = DateFormatter.serverDateFormatter.string(from: startOfWeek)
+            if let cached: Schedule = cache.read(Schedule.self, for: .schedule(groupId: group.id, weekStart: keyDate)) {
+                currentSchedule = cached
+                scheduleDataSource = .cache
+                errorMessage = nil
+                
+                if let apiError = error as? APIError, case .requestTimedOut(let seconds) = apiError {
+                    scheduleNotice = .timeout(seconds: seconds)
+                } else {
+                    scheduleNotice = nil
+                }
+                print("📦 Loaded cached schedule for group \(group.id), week \(keyDate)")
+            } else {
+                scheduleDataSource = .network
+                if let apiError = error as? APIError, case .requestTimedOut(let seconds) = apiError {
+                    scheduleNotice = .timeout(seconds: seconds)
+                } else {
+                    scheduleNotice = nil
+                }
+                errorMessage = error.localizedDescription
+                currentSchedule = nil
+                print("❌ Failed to load week schedule: \(error.localizedDescription)")
+            }
         }
-        
-        isLoadingSchedule = false
     }
     
     /// Переходит к предыдущей неделе

@@ -94,9 +94,7 @@ struct ContentView: View {
                     .navigationTitle(showUserInfo ? "SwiftGups" : "")
                     .navigationBarTitleDisplayMode(showUserInfo ? .large : .inline)
                     .refreshable {
-                        if showUserInfo {
-                            await scheduleService.refresh()
-                        }
+                        await scheduleService.refresh()
                     }
                 }
             }
@@ -586,14 +584,25 @@ struct ScheduleDisplayView: View {
     
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
+            if (scheduleService.scheduleDataSource == .cache && scheduleService.currentSchedule != nil) || scheduleService.scheduleNotice != nil {
+                ScheduleNoticeBanner(
+                    dataSource: scheduleService.scheduleDataSource,
+                    notice: scheduleService.scheduleNotice
+                )
+            }
+            
             if let errorMessage = scheduleService.errorMessage {
                 ErrorView(message: errorMessage) {
                     scheduleService.errorMessage = nil
                 }
             }
             
-            if scheduleService.isLoadingSchedule {
-                LoadingView(scheduleService: scheduleService)
+            if scheduleService.isLoadingFaculties {
+                LoadingView(title: "Загрузка институтов...", scheduleService: scheduleService)
+            } else if scheduleService.isLoadingGroups {
+                LoadingView(title: "Загрузка групп...", scheduleService: scheduleService)
+            } else if scheduleService.isLoadingSchedule {
+                LoadingView(title: "Загрузка расписания...", scheduleService: scheduleService)
             } else if let schedule = scheduleService.currentSchedule {
                 ScheduleMainView(
                     schedule: schedule,
@@ -605,6 +614,53 @@ struct ScheduleDisplayView: View {
                 EmptyScheduleView()
             }
         }
+    }
+}
+
+// MARK: - Offline/timeout banner
+
+struct ScheduleNoticeBanner: View {
+    let dataSource: ScheduleService.DataSource
+    let notice: ScheduleService.ScheduleNotice?
+    
+    var body: some View {
+        HStack(spacing: 10) {
+            Image(systemName: iconName)
+                .foregroundColor(.secondary)
+            Text(message)
+                .font(.subheadline)
+                .foregroundColor(.secondary)
+            Spacer()
+        }
+        .padding()
+        .background(
+            RoundedRectangle(cornerRadius: 12)
+                .fill(Color(.systemGray6))
+                .stroke(Color(.systemGray4), lineWidth: 1)
+        )
+    }
+    
+    private var iconName: String {
+        switch notice {
+        case .timeout:
+            return "clock"
+        case .none:
+            break
+        }
+        return dataSource == .cache ? "wifi.slash" : "info.circle"
+    }
+    
+    private var message: String {
+        if let notice {
+            switch notice {
+            case .timeout(let seconds):
+                if dataSource == .cache {
+                    return "Таймаут \(seconds) сек — показано сохранённое расписание"
+                }
+                return "Таймаут \(seconds) сек — попробуйте обновить"
+            }
+        }
+        return "Оффлайн режим: показано сохранённое расписание"
     }
 }
 
@@ -952,6 +1008,7 @@ struct ErrorView: View {
 // MARK: - Loading View
 
 struct LoadingView: View {
+    let title: String
     @ObservedObject var scheduleService: ScheduleService
     @State private var showVPNHint = false
     @State private var vpnHintTask: Task<Void, Never>?
@@ -964,7 +1021,7 @@ struct LoadingView: View {
                     .progressViewStyle(CircularProgressViewStyle())
                     .scaleEffect(1.2)
                 
-                Text("Загрузка расписания...")
+                Text(title)
                     .font(.subheadline)
                     .foregroundColor(.secondary)
 
@@ -977,9 +1034,9 @@ struct LoadingView: View {
         }
         .padding(40)
         .onAppear {
-            updateVPNHint(isLoading: scheduleService.isLoadingSchedule)
+            updateVPNHint(isLoading: scheduleService.isLoading)
         }
-        .onChange(of: scheduleService.isLoadingSchedule) { newValue in
+        .onChange(of: scheduleService.isLoading) { newValue in
             updateVPNHint(isLoading: newValue)
         }
     }

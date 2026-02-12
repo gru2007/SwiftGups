@@ -1630,6 +1630,7 @@ final class MiniScheduleService: ObservableObject {
         currentSchedule = nil
         groups = []
         errorMessage = nil
+        isLoadingGroups = true
         defaults.set(faculty.id, forKey: kFacultyId)
         defaults.removeObject(forKey: kGroupId)
         defaults.removeObject(forKey: kGroupName)
@@ -1641,6 +1642,7 @@ final class MiniScheduleService: ObservableObject {
         selectedGroup = group
         currentSchedule = nil
         errorMessage = nil
+        isLoadingSchedule = true
         defaults.set(group.id, forKey: kGroupId)
         defaults.set(group.name, forKey: kGroupName)
 
@@ -1659,6 +1661,7 @@ final class MiniScheduleService: ObservableObject {
         selectedDate = date
         Task { [selectedGroup] in
             if selectedGroup != nil {
+                await MainActor.run { self.isLoadingSchedule = true }
                 await loadWeekSchedule()
             }
         }
@@ -1735,6 +1738,8 @@ enum APIError: Error, LocalizedError {
     case networkError(Error)
     case invalidResponse
     case vpnOrBlockedNetwork
+    case requestTimedOut(seconds: Int)
+    case emptyResponse
 
     var errorDescription: String? {
         switch self {
@@ -1748,16 +1753,22 @@ enum APIError: Error, LocalizedError {
             return "Неверный формат ответа сервера"
         case .vpnOrBlockedNetwork:
             return "Не удалось подключиться к серверу. Возможно включен VPN или сеть блокирует доступ к dvgups.ru. Отключите VPN и повторите попытку."
+        case .requestTimedOut(let seconds):
+            return "Сервер не ответил за \(seconds) сек. Проверьте интернет и повторите."
+        case .emptyResponse:
+            return "Сервер вернул пустой ответ. Повторите попытку."
         }
     }
 }
 
 @MainActor
 final class DVGUPSAPIClient: ObservableObject {
-    private let primaryBaseURL = URL(string: "https://next.dvgups.ru/ext/")!
-    private let fallbackBaseURL = URL(string: "https://dvgups.ru/ext/")!
+    private let primaryBaseURL = URL(string: "https://dvgups.ru")!
+    /// Фолбек отключён: App Clip использует только `dvgups.ru`.
+    private let fallbackBaseURL = URL(string: "https://dvgups.ru")!
 
     private let session: URLSession
+    private let requestTimeoutSeconds: TimeInterval = 8
 
     init(session: URLSession = .shared) {
         self.session = session
@@ -1988,7 +1999,8 @@ final class DVGUPSAPIClient: ObservableObject {
         do {
             return try await performRequest(baseURL: baseURL, path: path, queryItems: queryItems)
         } catch {
-            guard shouldFallback(from: error) else { throw error }
+            guard shouldFallback(from: error),
+                  fallbackBaseURL.host != baseURL.host else { throw error }
             return try await performRequest(baseURL: fallbackBaseURL, path: path, queryItems: queryItems)
         }
     }
@@ -1998,21 +2010,16 @@ final class DVGUPSAPIClient: ObservableObject {
         path: String,
         queryItems: [URLQueryItem]
     ) async throws -> T {
-        guard var components = URLComponents(url: baseURL, resolvingAgainstBaseURL: false) else {
-            throw APIError.invalidURL
-        }
-
-        components.queryItems = [
-            URLQueryItem(name: "api", value: "1"),
-            URLQueryItem(name: "path", value: path)
-        ] + queryItems
-
+        let cleanPath = path.hasPrefix("/") ? String(path.dropFirst()) : path
+        let endpointURL = baseURL.appendingPathComponent(cleanPath)
+        guard var components = URLComponents(url: endpointURL, resolvingAgainstBaseURL: false) else { throw APIError.invalidURL }
+        components.queryItems = queryItems.isEmpty ? nil : queryItems
         guard let url = components.url else { throw APIError.invalidURL }
 
         var request = URLRequest(url: url)
         request.httpMethod = "GET"
         request.setValue("application/json", forHTTPHeaderField: "Accept")
-        request.timeoutInterval = 20
+        request.timeoutInterval = requestTimeoutSeconds
 
         do {
             let (data, response) = try await session.data(for: request)
@@ -2024,6 +2031,11 @@ final class DVGUPSAPIClient: ObservableObject {
             guard (200...299).contains(http.statusCode) else {
                 throw APIError.invalidResponse
             }
+            
+            if let text = String(data: data, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines),
+               text == "{}" || text.isEmpty {
+                throw APIError.emptyResponse
+            }
 
             do {
                 return try JSONDecoder().decode(T.self, from: data)
@@ -2034,7 +2046,9 @@ final class DVGUPSAPIClient: ObservableObject {
         } catch {
             if let urlError = error as? URLError {
                 switch urlError.code {
-                case .timedOut, .cannotConnectToHost, .networkConnectionLost, .cannotFindHost, .dnsLookupFailed, .internationalRoamingOff:
+                case .timedOut:
+                    throw APIError.requestTimedOut(seconds: Int(requestTimeoutSeconds))
+                case .cannotConnectToHost, .networkConnectionLost, .cannotFindHost, .dnsLookupFailed, .internationalRoamingOff:
                     throw APIError.vpnOrBlockedNetwork
                 default:
                     break
@@ -2047,7 +2061,7 @@ final class DVGUPSAPIClient: ObservableObject {
     private func shouldFallback(from error: Error) -> Bool {
         if let apiError = error as? APIError {
             switch apiError {
-            case .vpnOrBlockedNetwork, .invalidResponse:
+            case .vpnOrBlockedNetwork, .invalidResponse, .requestTimedOut, .emptyResponse:
                 return true
             default:
                 return false

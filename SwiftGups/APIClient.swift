@@ -10,6 +10,8 @@ enum APIError: Error, LocalizedError {
     case groupNotFound
     case facultyNotFound
     case vpnOrBlockedNetwork
+    case requestTimedOut(seconds: Int)
+    case emptyResponse
     
     var errorDescription: String? {
         switch self {
@@ -29,6 +31,10 @@ enum APIError: Error, LocalizedError {
             return "Факультет не найден"
         case .vpnOrBlockedNetwork:
             return "Не удалось подключиться к серверу. Возможно включен VPN или сеть блокирует доступ к dvgups.ru. Отключите VPN и повторите попытку."
+        case .requestTimedOut(let seconds):
+            return "Сервер не ответил за \(seconds) сек. Проверьте интернет и потяните вниз, чтобы обновить."
+        case .emptyResponse:
+            return "Сервер вернул пустой ответ. Потяните вниз, чтобы обновить."
         }
     }
 }
@@ -37,12 +43,15 @@ enum APIError: Error, LocalizedError {
 @MainActor
 class DVGUPSAPIClient: ObservableObject {
     
-    // MARK: - Константы (новый REST API)
+    // MARK: - Константы (REST API)
     
-    private let primaryBaseURL = URL(string: "https://next.dvgups.ru/ext/")!
-    private let fallbackBaseURL = URL(string: "https://dvgups.ru/ext/")!
+    /// Основной публичный домен, который использует веб-версия (см. `dvgups.ru.har`).
+    private let primaryBaseURL = URL(string: "https://dvgups.ru")!
+    /// Фолбек отключён: используем только `dvgups.ru`, чтобы не удваивать ожидание.
+    private let fallbackBaseURL = URL(string: "https://dvgups.ru")!
     
     private let session: URLSession
+    private let requestTimeoutSeconds: TimeInterval = 8
     
     // MARK: - Инициализация
     
@@ -60,30 +69,54 @@ class DVGUPSAPIClient: ObservableObject {
     
     /// Получает список институтов/факультетов (динамически)
     func fetchFaculties() async throws -> FacultiesResult {
-        let response: APIEnvelope<[[String?]]> = try await request(
+        // ВУЗ иногда меняет формат отдачи: встречались как "табличка" [[id, name]],
+        // так и нормальный массив объектов. Декодим в 2 прохода.
+        let data = try await requestData(
             baseURL: primaryBaseURL,
             path: "/api/v1/timetable/faculties",
             queryItems: []
         )
         
-        // data: [[id?, name?], ...]
         var faculties: [Faculty] = []
         var missingIdNames: [String] = []
-        for row in response.data {
-            let rawId = row.count > 0 ? row[0] : nil
-            let name = row.count > 1 ? row[1] : nil
-            
-            guard let facultyName = name?.trimmingCharacters(in: .whitespacesAndNewlines),
-                  !facultyName.isEmpty else { continue }
-            
-            guard let id = rawId?.trimmingCharacters(in: .whitespacesAndNewlines),
-                  !id.isEmpty else {
-                // По ТЗ: не подставляем id из старого списка. Просто сообщаем в UI.
-                missingIdNames.append(facultyName)
-                continue
+        
+        // Формат 1: data = [[id?, name?], ...]
+        if let envelope = try? JSONDecoder().decode(APIEnvelope<[[String?]]>.self, from: data) {
+            for row in envelope.data {
+                let rawId = row.count > 0 ? row[0] : nil
+                let name = row.count > 1 ? row[1] : nil
+                
+                guard let facultyName = name?.trimmingCharacters(in: .whitespacesAndNewlines),
+                      !facultyName.isEmpty else { continue }
+                
+                guard let id = rawId?.trimmingCharacters(in: .whitespacesAndNewlines),
+                      !id.isEmpty else {
+                    // По ТЗ: не подставляем id из старого списка. Просто сообщаем в UI.
+                    missingIdNames.append(facultyName)
+                    continue
+                }
+                
+                faculties.append(Faculty(id: id, name: facultyName))
             }
-            
-            faculties.append(Faculty(id: id, name: facultyName))
+        } else {
+            // Формат 2: data = [{ id, name }, ...] (оборачивается в status/data)
+            struct FacultyDTO: Decodable {
+                let id: String?
+                let name: String?
+            }
+            let envelope = try JSONDecoder().decode(APIEnvelope<[FacultyDTO]>.self, from: data)
+            for dto in envelope.data {
+                let facultyName = (dto.name ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+                guard !facultyName.isEmpty else { continue }
+                
+                let id = (dto.id ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+                guard !id.isEmpty else {
+                    missingIdNames.append(facultyName)
+                    continue
+                }
+                
+                faculties.append(Faculty(id: id, name: facultyName))
+            }
         }
         
         // Убираем дубликаты по id, сортируем по названию
@@ -289,6 +322,20 @@ class DVGUPSAPIClient: ObservableObject {
         let data: T
     }
     
+    private func requestData(
+        baseURL: URL,
+        path: String,
+        queryItems: [URLQueryItem]
+    ) async throws -> Data {
+        do {
+            return try await performRequestData(baseURL: baseURL, path: path, queryItems: queryItems)
+        } catch {
+            guard shouldFallback(from: error),
+                  fallbackBaseURL.host != baseURL.host else { throw error }
+            return try await performRequestData(baseURL: fallbackBaseURL, path: path, queryItems: queryItems)
+        }
+    }
+    
     private func request<T: Decodable>(
         baseURL: URL,
         path: String,
@@ -298,7 +345,8 @@ class DVGUPSAPIClient: ObservableObject {
         do {
             return try await performRequest(baseURL: baseURL, path: path, queryItems: queryItems)
         } catch {
-            guard shouldFallback(from: error) else { throw error }
+            guard shouldFallback(from: error),
+                  fallbackBaseURL.host != baseURL.host else { throw error }
             return try await performRequest(baseURL: fallbackBaseURL, path: path, queryItems: queryItems)
         }
     }
@@ -308,21 +356,34 @@ class DVGUPSAPIClient: ObservableObject {
         path: String,
         queryItems: [URLQueryItem]
     ) async throws -> T {
-        guard var components = URLComponents(url: baseURL, resolvingAgainstBaseURL: false) else {
+        let data = try await performRequestData(baseURL: baseURL, path: path, queryItems: queryItems)
+        do {
+            return try JSONDecoder().decode(T.self, from: data)
+        } catch {
+            let preview = String(data: data, encoding: .utf8) ?? ""
+            throw APIError.parseError("\(error.localizedDescription). Response preview: \(preview.prefix(300))")
+        }
+    }
+    
+    private func performRequestData(
+        baseURL: URL,
+        path: String,
+        queryItems: [URLQueryItem]
+    ) async throws -> Data {
+        let cleanPath = path.hasPrefix("/") ? String(path.dropFirst()) : path
+        let endpointURL = baseURL.appendingPathComponent(cleanPath)
+        
+        guard var components = URLComponents(url: endpointURL, resolvingAgainstBaseURL: false) else {
             throw APIError.invalidURL
         }
-        
-        components.queryItems = [
-            URLQueryItem(name: "api", value: "1"),
-            URLQueryItem(name: "path", value: path)
-        ] + queryItems
+        components.queryItems = queryItems.isEmpty ? nil : queryItems
         
         guard let url = components.url else { throw APIError.invalidURL }
         
         var request = URLRequest(url: url)
         request.httpMethod = "GET"
         request.setValue("application/json", forHTTPHeaderField: "Accept")
-        request.timeoutInterval = 20
+        request.timeoutInterval = requestTimeoutSeconds
         
         do {
             let (data, response) = try await session.data(for: request)
@@ -331,7 +392,7 @@ class DVGUPSAPIClient: ObservableObject {
                 throw APIError.invalidResponse
             }
             
-            // Если next отвечает 5xx — попробуем fallback
+            // Если запасной домен отвечает 5xx — пробуем fallback/ошибку отдать наверх через общий retry.
             if (500...599).contains(httpResponse.statusCode), baseURL == primaryBaseURL {
                 throw APIError.invalidResponse
             }
@@ -340,17 +401,19 @@ class DVGUPSAPIClient: ObservableObject {
                 throw APIError.invalidResponse
             }
             
-            do {
-                return try JSONDecoder().decode(T.self, from: data)
-            } catch {
-                let preview = String(data: data, encoding: .utf8) ?? ""
-                throw APIError.parseError("\(error.localizedDescription). Response preview: \(preview.prefix(300))")
+            if let text = String(data: data, encoding: .utf8)?
+                .trimmingCharacters(in: .whitespacesAndNewlines),
+               text == "{}" || text.isEmpty {
+                throw APIError.emptyResponse
             }
+            
+            return data
         } catch {
             if let urlError = error as? URLError {
                 switch urlError.code {
-                case .timedOut, .cannotConnectToHost, .networkConnectionLost, .cannotFindHost, .dnsLookupFailed, .internationalRoamingOff:
-                    // Часто возникает при активном VPN/блокировке/недоступности next
+                case .timedOut:
+                    throw APIError.requestTimedOut(seconds: Int(requestTimeoutSeconds))
+                case .cannotConnectToHost, .networkConnectionLost, .cannotFindHost, .dnsLookupFailed, .internationalRoamingOff:
                     throw APIError.vpnOrBlockedNetwork
                 default:
                     break
@@ -366,6 +429,10 @@ class DVGUPSAPIClient: ObservableObject {
         if let apiError = error as? APIError {
             switch apiError {
             case .vpnOrBlockedNetwork:
+                return true
+            case .requestTimedOut:
+                return true
+            case .emptyResponse:
                 return true
             case .invalidResponse:
                 return true
