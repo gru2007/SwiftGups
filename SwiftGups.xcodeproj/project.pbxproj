@@ -7,10 +7,10 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
-		4416D4E62F12609200B1C537 /* FLEX in Frameworks */ = {isa = PBXBuildFile; productRef = 4416D4E52F12609200B1C537 /* FLEX */; };
 		4435B8CB2F29F22000AB3B6C /* AlertKit in Frameworks */ = {isa = PBXBuildFile; productRef = 4435B8CA2F29F22000AB3B6C /* AlertKit */; };
 		44B000072E5C14D200EE0207 /* SwiftGupsWidget.appex in Embed App Extensions */ = {isa = PBXBuildFile; fileRef = 44B000012E5C14D200EE0201 /* SwiftGupsWidget.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
 		44B42EB92F2B48FF00599598 /* MiniGups.app in Embed App Clips */ = {isa = PBXBuildFile; fileRef = 44B42EAD2F2B48FD00599598 /* MiniGups.app */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
+		44D107842F3ECE1C001B4644 /* DebugSwift in Frameworks */ = {isa = PBXBuildFile; productRef = 44D107832F3ECE1C001B4644 /* DebugSwift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -110,8 +110,8 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				44D107842F3ECE1C001B4644 /* DebugSwift in Frameworks */,
 				4435B8CB2F29F22000AB3B6C /* AlertKit in Frameworks */,
-				4416D4E62F12609200B1C537 /* FLEX in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -138,6 +138,7 @@
 				44A82CBD2E5C14D200EE0119 /* SwiftGups */,
 				44B000092E5C14D200EE0209 /* SwiftGupsWidget */,
 				44B42EAE2F2B48FD00599598 /* MiniGups */,
+				44D107822F3ECE1C001B4644 /* Frameworks */,
 				44A82CBC2E5C14D200EE0119 /* Products */,
 			);
 			sourceTree = "<group>";
@@ -150,6 +151,13 @@
 				44B42EAD2F2B48FD00599598 /* MiniGups.app */,
 			);
 			name = Products;
+			sourceTree = "<group>";
+		};
+		44D107822F3ECE1C001B4644 /* Frameworks */ = {
+			isa = PBXGroup;
+			children = (
+			);
+			name = Frameworks;
 			sourceTree = "<group>";
 		};
 /* End PBXGroup section */
@@ -175,8 +183,8 @@
 			);
 			name = SwiftGups;
 			packageProductDependencies = (
-				4416D4E52F12609200B1C537 /* FLEX */,
 				4435B8CA2F29F22000AB3B6C /* AlertKit */,
+				44D107832F3ECE1C001B4644 /* DebugSwift */,
 			);
 			productName = SwiftGups;
 			productReference = 44A82CBB2E5C14D200EE0119 /* SwiftGups.app */;
@@ -256,8 +264,8 @@
 			mainGroup = 44A82CB22E5C14D200EE0119;
 			minimizedProjectReferenceProxies = 1;
 			packageReferences = (
-				4416D4E42F12609200B1C537 /* XCRemoteSwiftPackageReference "FLEX-dylib" */,
 				4435B8C92F29F22000AB3B6C /* XCRemoteSwiftPackageReference "AlertKit" */,
+				44D107812F3ECDD1001B4644 /* XCRemoteSwiftPackageReference "DebugSwift" */,
 			);
 			preferredProjectObjectVersion = 77;
 			productRefGroup = 44A82CBC2E5C14D200EE0119 /* Products */;
@@ -354,7 +362,7 @@
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				MARKETING_VERSION = 2.3;
+				MARKETING_VERSION = 2.4;
 				PRODUCT_BUNDLE_IDENTIFIER = tech.artemev.swiftgups;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SWIFT_EMIT_LOC_STRINGS = YES;
@@ -390,7 +398,7 @@
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				MARKETING_VERSION = 2.3;
+				MARKETING_VERSION = 2.4;
 				PRODUCT_BUNDLE_IDENTIFIER = tech.artemev.swiftgups;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SWIFT_EMIT_LOC_STRINGS = YES;
@@ -684,14 +692,6 @@
 /* End XCConfigurationList section */
 
 /* Begin XCRemoteSwiftPackageReference section */
-		4416D4E42F12609200B1C537 /* XCRemoteSwiftPackageReference "FLEX-dylib" */ = {
-			isa = XCRemoteSwiftPackageReference;
-			repositoryURL = "https://github.com/gru2007/FLEX-dylib";
-			requirement = {
-				branch = master;
-				kind = branch;
-			};
-		};
 		4435B8C92F29F22000AB3B6C /* XCRemoteSwiftPackageReference "AlertKit" */ = {
 			isa = XCRemoteSwiftPackageReference;
 			repositoryURL = "https://github.com/sparrowcode/AlertKit";
@@ -700,18 +700,26 @@
 				minimumVersion = 5.1.9;
 			};
 		};
+		44D107812F3ECDD1001B4644 /* XCRemoteSwiftPackageReference "DebugSwift" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/DebugSwift/DebugSwift";
+			requirement = {
+				kind = upToNextMajorVersion;
+				minimumVersion = 1.11.1;
+			};
+		};
 /* End XCRemoteSwiftPackageReference section */
 
 /* Begin XCSwiftPackageProductDependency section */
-		4416D4E52F12609200B1C537 /* FLEX */ = {
-			isa = XCSwiftPackageProductDependency;
-			package = 4416D4E42F12609200B1C537 /* XCRemoteSwiftPackageReference "FLEX-dylib" */;
-			productName = FLEX;
-		};
 		4435B8CA2F29F22000AB3B6C /* AlertKit */ = {
 			isa = XCSwiftPackageProductDependency;
 			package = 4435B8C92F29F22000AB3B6C /* XCRemoteSwiftPackageReference "AlertKit" */;
 			productName = AlertKit;
+		};
+		44D107832F3ECE1C001B4644 /* DebugSwift */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 44D107812F3ECDD1001B4644 /* XCRemoteSwiftPackageReference "DebugSwift" */;
+			productName = DebugSwift;
 		};
 /* End XCSwiftPackageProductDependency section */
 	};

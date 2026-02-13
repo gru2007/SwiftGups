@@ -8,9 +8,12 @@
 import SwiftUI
 import SwiftData
 import CloudKit
+import UIKit
+import DebugSwift
 
 @main
 struct SwiftGupsApp: App {
+    @UIApplicationDelegateAdaptor(SwiftGupsAppDelegate.self) private var appDelegate
     @StateObject private var liveActivityManager = LiveActivityManager()
     @Environment(\.scenePhase) private var scenePhase
     
@@ -28,6 +31,8 @@ struct SwiftGupsApp: App {
         WindowGroup {
             MainAppView()
                 .environmentObject(liveActivityManager)
+                // Shake-to-toggle DebugSwift (работает в DEBUG + TestFlight)
+                .background(ShakeDetectorView().allowsHitTesting(false))
         }
         .modelContainer(Self.getOrCreateModelContainer())
         .onChange(of: scenePhase) { oldPhase, newPhase in
@@ -102,4 +107,93 @@ struct SwiftGupsApp: App {
     }
     
 
+}
+
+// MARK: - DebugSwift (DEBUG + TestFlight)
+
+private enum DebugMenuEnvironment {
+    static var isDebug: Bool {
+#if DEBUG
+        true
+#else
+        false
+#endif
+    }
+    
+    /// TestFlight installs use `sandboxReceipt`.
+    static var isTestFlight: Bool {
+        Bundle.main.appStoreReceiptURL?.lastPathComponent == "sandboxReceipt"
+    }
+    
+    static var isEnabled: Bool {
+        isDebug || isTestFlight
+    }
+}
+
+final class SwiftGupsAppDelegate: NSObject, UIApplicationDelegate {
+    static var shared: SwiftGupsAppDelegate?
+    
+    let debugSwift = DebugSwift()
+    
+    override init() {
+        super.init()
+        Self.shared = self
+    }
+    
+    func application(
+        _ application: UIApplication,
+        didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]? = nil
+    ) -> Bool {
+        guard DebugMenuEnvironment.isEnabled else { return true }
+        
+        // Setup early; show when app becomes active (window is ready).
+        debugSwift.setup()
+        return true
+    }
+    
+    func applicationDidBecomeActive(_ application: UIApplication) {
+        // Чтобы не "светить" дебаг-меню в TestFlight (включая возможный Apple beta review),
+        // показываем его автоматически только в DEBUG. В TestFlight — открывается по shake.
+        guard DebugMenuEnvironment.isDebug else { return }
+        debugSwift.show()
+    }
+    
+    func toggleDebugMenu() {
+        guard DebugMenuEnvironment.isEnabled else { return }
+        debugSwift.toggle()
+    }
+}
+
+// MARK: - Shake detector (SwiftUI-friendly)
+
+private struct ShakeDetectorView: UIViewControllerRepresentable {
+    func makeUIViewController(context: Context) -> ShakeDetectorViewController {
+        ShakeDetectorViewController()
+    }
+    
+    func updateUIViewController(_ uiViewController: ShakeDetectorViewController, context: Context) {}
+}
+
+private final class ShakeDetectorViewController: UIViewController {
+    override var canBecomeFirstResponder: Bool { true }
+    
+    override func viewDidAppear(_ animated: Bool) {
+        super.viewDidAppear(animated)
+        becomeFirstResponder()
+    }
+    
+    override func motionEnded(_ motion: UIEvent.EventSubtype, with event: UIEvent?) {
+        super.motionEnded(motion, with: event)
+        
+        guard motion == .motionShake, DebugMenuEnvironment.isEnabled else { return }
+        SwiftGupsAppDelegate.shared?.toggleDebugMenu()
+    }
+    
+    override func loadView() {
+        // Invisible, non-interactive view that still participates in responder chain.
+        let view = UIView(frame: .zero)
+        view.isUserInteractionEnabled = false
+        view.backgroundColor = .clear
+        self.view = view
+    }
 }

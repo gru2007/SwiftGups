@@ -1,5 +1,5 @@
 {
-  "originHash" : "6add29a73576616d2d66c2ffc906e0f8e5e5750a1bf8213fae232ef99b8c67c4",
+  "originHash" : "b0e8cae94c0c4b3916f7464d41c02cf8ed14ca53fcda3a4c50c3734c9f67fd27",
   "pins" : [
     {
       "identity" : "alertkit",
@@ -11,12 +11,12 @@
       }
     },
     {
-      "identity" : "flex-dylib",
+      "identity" : "debugswift",
       "kind" : "remoteSourceControl",
-      "location" : "https://github.com/gru2007/FLEX-dylib",
+      "location" : "https://github.com/DebugSwift/DebugSwift",
       "state" : {
-        "branch" : "master",
-        "revision" : "9eb92adc4af9cec6788be893840a242ae79ec434"
+        "revision" : "41384567e224a8ecc7c5e8019922b86597c68ca7",
+        "version" : "1.11.1"
       }
     }
   ],
