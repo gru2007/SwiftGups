@@ -7,6 +7,8 @@ enum APIError: Error, LocalizedError {
     case parseError(String)
     case networkError(Error)
     case invalidResponse
+    case authenticationRequired
+    case invalidCredentials
     case groupNotFound
     case facultyNotFound
     case vpnOrBlockedNetwork
@@ -25,6 +27,10 @@ enum APIError: Error, LocalizedError {
             return "Ошибка сети: \(error.localizedDescription)"
         case .invalidResponse:
             return "Неверный формат ответа сервера"
+        case .authenticationRequired:
+            return "Для доступа к расписанию нужен вход в ЛК ДВГУПС. Откройте вкладку «Профиль» и добавьте логин и пароль."
+        case .invalidCredentials:
+            return "Не удалось авторизоваться в ЛК ДВГУПС. Проверьте логин и пароль во вкладке «Профиль»."
         case .groupNotFound:
             return "Группа не найдена"
         case .facultyNotFound:
@@ -51,12 +57,14 @@ class DVGUPSAPIClient: ObservableObject {
     private let fallbackBaseURL = URL(string: "https://dvgups.ru")!
     
     private let session: URLSession
+    private let authService: DVGUPSAuthService
     private let requestTimeoutSeconds: TimeInterval = 8
     
     // MARK: - Инициализация
     
-    init(session: URLSession = .shared) {
+    init(session: URLSession = .shared, authService: DVGUPSAuthService = .shared) {
         self.session = session
+        self.authService = authService
     }
     
     // MARK: - Публичные методы (REST)
@@ -382,15 +390,11 @@ class DVGUPSAPIClient: ObservableObject {
         
         var request = URLRequest(url: url)
         request.httpMethod = "GET"
-        request.setValue("application/json", forHTTPHeaderField: "Accept")
+        applyDefaultHeaders(to: &request, baseURL: baseURL, path: path)
         request.timeoutInterval = requestTimeoutSeconds
         
         do {
-            let (data, response) = try await session.data(for: request)
-            
-            guard let httpResponse = response as? HTTPURLResponse else {
-                throw APIError.invalidResponse
-            }
+            let (data, httpResponse) = try await performRequestHandlingAuthorization(request)
             
             // Если запасной домен отвечает 5xx — пробуем fallback/ошибку отдать наверх через общий retry.
             if (500...599).contains(httpResponse.statusCode), baseURL == primaryBaseURL {
@@ -408,6 +412,8 @@ class DVGUPSAPIClient: ObservableObject {
             }
             
             return data
+        } catch let apiError as APIError {
+            throw apiError
         } catch {
             if let urlError = error as? URLError {
                 switch urlError.code {
@@ -421,6 +427,88 @@ class DVGUPSAPIClient: ObservableObject {
             }
             throw APIError.networkError(error)
         }
+    }
+
+    private func performRequestHandlingAuthorization(
+        _ request: URLRequest,
+        allowReauthorization: Bool = true
+    ) async throws -> (Data, HTTPURLResponse) {
+        let (data, response) = try await session.data(for: request)
+
+        guard let httpResponse = response as? HTTPURLResponse else {
+            throw APIError.invalidResponse
+        }
+
+        if isAuthorizationFailure(statusCode: httpResponse.statusCode) {
+            print("🔐 DVGUPS API: got \(httpResponse.statusCode) for \(request.url?.absoluteString ?? "<nil>")")
+            if allowReauthorization {
+                do {
+                    print("🔐 DVGUPS API: trying silent reauth")
+                    try await authService.reauthorizeIfPossible()
+                    print("🔐 DVGUPS API: silent reauth succeeded, retrying request")
+                } catch let apiError as APIError {
+                    if case .authenticationRequired = apiError {
+                        authService.markAuthorizationRequired()
+                    }
+                    print("🔐 DVGUPS API: silent reauth failed: \(apiError.localizedDescription)")
+                    throw apiError
+                }
+
+                return try await performRequestHandlingAuthorization(request, allowReauthorization: false)
+            }
+
+            if authService.status.isAuthenticated {
+                throw APIError.invalidCredentials
+            }
+
+            throw APIError.authenticationRequired
+        }
+
+        if isProtectedTimetablePath(request.url), (200...299).contains(httpResponse.statusCode) {
+            authService.noteProtectedRequestSucceeded()
+        }
+
+        return (data, httpResponse)
+    }
+
+    private func applyDefaultHeaders(to request: inout URLRequest, baseURL: URL, path: String) {
+        request.setValue(DVGUPSBrowserProfile.userAgent, forHTTPHeaderField: "User-Agent")
+        request.setValue(DVGUPSBrowserProfile.acceptLanguage, forHTTPHeaderField: "Accept-Language")
+        request.setValue("keep-alive", forHTTPHeaderField: "Connection")
+
+        guard baseURL.host == primaryBaseURL.host, path.hasPrefix("/api/v1/") else {
+            request.setValue("application/json", forHTTPHeaderField: "Accept")
+            return
+        }
+
+        request.setValue("application/json", forHTTPHeaderField: "Accept")
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.setValue("same-origin", forHTTPHeaderField: "Sec-Fetch-Site")
+        request.setValue("cors", forHTTPHeaderField: "Sec-Fetch-Mode")
+        request.setValue("empty", forHTTPHeaderField: "Sec-Fetch-Dest")
+        request.setValue("u=3, i", forHTTPHeaderField: "Priority")
+        request.setValue(referer(for: path), forHTTPHeaderField: "Referer")
+    }
+
+    private func isAuthorizationFailure(statusCode: Int) -> Bool {
+        statusCode == 401 || statusCode == 403
+    }
+
+    private func isProtectedTimetablePath(_ url: URL?) -> Bool {
+        guard let path = url?.path else { return false }
+        return path.contains("/api/v1/timetable/")
+    }
+
+    private func referer(for path: String) -> String {
+        if path.contains("/api/v1/timetable/weeks") || path.contains("/api/v1/timetable/schedule") {
+            return "https://dvgups.ru/public/schedule/group"
+        }
+
+        if path.contains("/api/v1/timetable/") {
+            return "https://dvgups.ru/public/schedule"
+        }
+
+        return "https://dvgups.ru/"
     }
     
     private func shouldFallback(from error: Error) -> Bool {

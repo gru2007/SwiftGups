@@ -1863,6 +1863,7 @@ struct EditHomeworkSheet: View {
 
 // MARK: - Profile Tab
 
+@MainActor
 struct ProfileTab: View {
     let currentUser: User
     let isInSplitView: Bool
@@ -1870,7 +1871,9 @@ struct ProfileTab: View {
     @EnvironmentObject var cloudKitService: CloudKitService
     @EnvironmentObject private var liveActivityManager: LiveActivityManager
     @AppStorage(LiveActivitySettings.enabledKey) private var liveActivityEnabled: Bool = false
+    @StateObject private var authService = DVGUPSAuthService.shared
     @State private var showingEditProfile = false
+    @State private var showingDVGUPSAuth = false
     @State private var showingDeleteConfirmation = false
     @State private var showingLessonTimes = false
     @State private var showingAbout = false
@@ -1895,6 +1898,11 @@ struct ProfileTab: View {
                         // Статус синхронизации
                         CloudKitStatusView(cloudKitService: cloudKitService)
                             .padding(.horizontal)
+
+                        DVGUPSAuthStatusCard(authService: authService) {
+                            showingDVGUPSAuth = true
+                        }
+                        .padding(.horizontal)
                         
                         // Настройки
                         VStack(spacing: 16) {
@@ -1950,6 +1958,11 @@ struct ProfileTab: View {
                             // Статус синхронизации
                             CloudKitStatusView(cloudKitService: cloudKitService)
                                 .padding(.horizontal)
+
+                            DVGUPSAuthStatusCard(authService: authService) {
+                                showingDVGUPSAuth = true
+                            }
+                            .padding(.horizontal)
                             
                             // Настройки
                             VStack(spacing: 16) {
@@ -1999,11 +2012,17 @@ struct ProfileTab: View {
                 EditProfileSheet(user: currentUser)
             }
         }
+        .sheet(isPresented: $showingDVGUPSAuth) {
+            DVGUPSAuthSheet()
+        }
         .sheet(isPresented: $showingLessonTimes) {
             LessonTimesSheet()
         }
         .sheet(isPresented: $showingAbout) {
             AboutSheet()
+        }
+        .task {
+            await authService.refreshStatusIfNeeded()
         }
         .confirmationDialog(
             "Сбросить все данные?",
@@ -2023,9 +2042,17 @@ struct ProfileTab: View {
     private func resetUserData() {
         // Закрываем все открытые sheet'ы перед удалением
         showingEditProfile = false
+        showingDVGUPSAuth = false
         showingDeleteConfirmation = false
         showingLessonTimes = false
         showingAbout = false
+        Task {
+            do {
+                try await authService.clearCredentials()
+            } catch {
+                print("❌ Failed to clear DVGUPS credentials: \(error.localizedDescription)")
+            }
+        }
         
         // Проверяем, что объект еще существует в контексте
         guard modelContext.model(for: currentUser.persistentModelID) != nil else {
