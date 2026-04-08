@@ -19,31 +19,31 @@ enum DVGUPSAuthStatus: Equatable {
     var title: String {
         switch self {
         case .unknown:
-            return "Авторизация не проверялась"
+            return "Подключите ЛК ДВГУПС"
         case .checking:
             return "Проверяем доступ"
         case .authenticated(let login):
             if let login, !login.isEmpty {
-                return "Подключено: \(login)"
+                return "Выполнен вход: \(login)"
             }
             return "Личный кабинет подключен"
         case .credentialsMissing:
             return "Нужен вход в ЛК ДВГУПС"
         case .failed:
-            return "Нужна переавторизация"
+            return "Нужно войти заново"
         }
     }
 
     var message: String {
         switch self {
         case .unknown:
-            return "Приложение ещё не проверяло сессию расписания."
+            return "Подключите личный кабинет, чтобы расписание и Live Activity обновлялись без ручных действий."
         case .checking:
-            return "Обновляем cookie-сессию между lk.dvgups.ru и dvgups.ru."
+            return "Обновляем сессию между lk.dvgups.ru и dvgups.ru."
         case .authenticated:
-            return "Сессионные cookie действуют, расписание можно запрашивать без ручных действий."
+            return "Расписание, повторный вход и фоновые обновления работают автоматически."
         case .credentialsMissing:
-            return "Сохраните логин и пароль от личного кабинета, чтобы получать расписание."
+            return "Сохраните логин и пароль от личного кабинета. Они нужны для загрузки расписания и фоновых обновлений."
         case .failed(let message):
             return message
         }
@@ -214,7 +214,7 @@ actor DVGUPSAuthCoordinator {
             }
 
             guard let credentials = try credentialsStore.load() else {
-                return forceReauthentication ? .credentialsMissing : .unknown
+                return .credentialsMissing
             }
 
             try await reauthorize(with: credentials)

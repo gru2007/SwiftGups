@@ -36,6 +36,7 @@ struct RegistrationView: View {
     @Environment(\.modelContext) private var modelContext
     @EnvironmentObject var cloudKitService: CloudKitService
     @StateObject private var scheduleService = ScheduleService()
+    @ObservedObject private var authService = DVGUPSAuthService.shared
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
     
     @State private var name: String = ""
@@ -48,6 +49,8 @@ struct RegistrationView: View {
     @State private var errorMessage: String?
     @State private var skipFacultySelection = false // Пропуск выбора института/факультета
     @State private var skipGroupSelection = false // Пропуск выбора группы при недоступности сайта
+    @State private var showingDVGUPSAuth = false
+    @State private var lastKnownDVGUPSAuthStatus: DVGUPSAuthStatus = .unknown
     @FocusState private var isNameFieldFocused: Bool
     
     private var isIPad: Bool {
@@ -184,6 +187,9 @@ struct RegistrationView: View {
                 }
             }
         }
+        .sheet(isPresented: $showingDVGUPSAuth, onDismiss: handleDVGUPSAuthDismiss) {
+            DVGUPSAuthSheet()
+        }
         .onDisappear {
             // Закрываем клавиатуру при выходе с экрана
             isNameFieldFocused = false
@@ -191,6 +197,8 @@ struct RegistrationView: View {
         }
         .task {
             await scheduleService.ensureFacultiesLoaded()
+            await authService.refreshStatusIfNeeded()
+            lastKnownDVGUPSAuthStatus = authService.status
             if selectedFaculty != nil {
                 await scheduleService.loadGroups()
             }
@@ -303,6 +311,12 @@ struct RegistrationView: View {
                 }
             }
 
+            DVGUPSFirstLaunchHintCard(
+                isConnected: authService.status.isAuthenticated || authService.storedLogin != nil
+            ) {
+                showingDVGUPSAuth = true
+            }
+
             // Сообщение об ошибке
             if let errorMessage = errorMessage, !skipGroupSelection && !skipFacultySelection {
                 ErrorBanner(message: errorMessage) {
@@ -379,6 +393,51 @@ struct RegistrationView: View {
         } catch {
             showingProgress = false
             errorMessage = "Ошибка сохранения данных: \(error.localizedDescription)"
+        }
+    }
+
+    private func handleDVGUPSAuthDismiss() {
+        Task {
+            let previousStatus = lastKnownDVGUPSAuthStatus
+            let refreshedStatus = await authService.refreshStatus(forceReauthentication: false)
+            lastKnownDVGUPSAuthStatus = refreshedStatus
+
+            guard refreshedStatus.isAuthenticated, !previousStatus.isAuthenticated else {
+                return
+            }
+
+            await refreshRegistrationScheduleData()
+        }
+    }
+
+    private func refreshRegistrationScheduleData() async {
+        let previouslySelectedFacultyId = selectedFaculty?.id
+        let previouslySelectedGroupId = selectedGroup?.id
+
+        await scheduleService.loadFaculties()
+
+        if let previouslySelectedFacultyId {
+            selectedFaculty = scheduleService.faculties.first(where: { $0.id == previouslySelectedFacultyId })
+        } else {
+            selectedFaculty = nil
+        }
+
+        guard let faculty = selectedFaculty, !skipFacultySelection else {
+            selectedGroup = nil
+            return
+        }
+
+        scheduleService.selectedFaculty = faculty
+        await scheduleService.loadGroups()
+
+        if let previouslySelectedGroupId {
+            selectedGroup = scheduleService.groups.first(where: { $0.id == previouslySelectedGroupId })
+        } else {
+            selectedGroup = nil
+        }
+
+        if selectedGroup == nil && !scheduleService.groups.isEmpty {
+            skipGroupSelection = false
         }
     }
 }

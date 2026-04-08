@@ -581,6 +581,7 @@ struct GroupCard: View {
 struct ScheduleDisplayView: View {
     @ObservedObject var scheduleService: ScheduleService
     let viewMode: ScheduleViewMode
+    @State private var showingDVGUPSAuth = false
     
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
@@ -591,7 +592,15 @@ struct ScheduleDisplayView: View {
                 )
             }
             
-            if let errorMessage = scheduleService.errorMessage {
+            if let recoveryAction = scheduleService.recoveryAction,
+               let errorMessage = scheduleService.errorMessage {
+                ScheduleRecoveryActionCard(
+                    recoveryAction: recoveryAction,
+                    message: errorMessage
+                ) {
+                    showingDVGUPSAuth = true
+                }
+            } else if let errorMessage = scheduleService.errorMessage {
                 ErrorView(message: errorMessage) {
                     scheduleService.errorMessage = nil
                 }
@@ -613,6 +622,9 @@ struct ScheduleDisplayView: View {
             } else if scheduleService.selectedGroup != nil {
                 EmptyScheduleView()
             }
+        }
+        .sheet(isPresented: $showingDVGUPSAuth) {
+            DVGUPSAuthSheet()
         }
     }
 }
@@ -1002,6 +1014,80 @@ struct ErrorView: View {
                 .fill(Color.red.opacity(0.1))
                 .stroke(Color.red.opacity(0.3), lineWidth: 1)
         )
+    }
+}
+
+struct ScheduleRecoveryActionCard: View {
+    let recoveryAction: ScheduleService.RecoveryAction
+    let message: String
+    let action: () -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            HStack(alignment: .top, spacing: 12) {
+                Image(systemName: iconName)
+                    .font(.title3)
+                    .foregroundStyle(tintColor)
+
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(title)
+                        .font(.headline)
+
+                    Text(message)
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+
+            Button(buttonTitle, action: action)
+                .buttonStyle(.borderedProminent)
+        }
+        .padding(18)
+        .background(
+            RoundedRectangle(cornerRadius: 18, style: .continuous)
+                .fill(tintColor.opacity(0.08))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 18, style: .continuous)
+                .stroke(tintColor.opacity(0.18), lineWidth: 1)
+        )
+    }
+
+    private var title: String {
+        switch recoveryAction {
+        case .connectDVGUPSAccount:
+            return "Подключите ЛК ДВГУПС"
+        case .refreshDVGUPSAccount:
+            return "Обновите вход в ЛК ДВГУПС"
+        }
+    }
+
+    private var buttonTitle: String {
+        switch recoveryAction {
+        case .connectDVGUPSAccount:
+            return "Подключить ЛК"
+        case .refreshDVGUPSAccount:
+            return "Обновить доступ"
+        }
+    }
+
+    private var iconName: String {
+        switch recoveryAction {
+        case .connectDVGUPSAccount:
+            return "lock.shield.fill"
+        case .refreshDVGUPSAccount:
+            return "arrow.clockwise.shield.fill"
+        }
+    }
+
+    private var tintColor: Color {
+        switch recoveryAction {
+        case .connectDVGUPSAccount:
+            return .orange
+        case .refreshDVGUPSAccount:
+            return .red
+        }
     }
 }
 

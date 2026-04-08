@@ -1912,7 +1912,9 @@ struct ProfileTab: View {
                                 action: { showingEditProfile = true }
                             )
                             
-                            LiveActivityToggleCard(isOn: $liveActivityEnabled)
+                            LiveActivityToggleCard(isOn: $liveActivityEnabled) {
+                                showingDVGUPSAuth = true
+                            }
                                 .environmentObject(liveActivityManager)
                             
                             ProfileMenuItem(
@@ -1972,7 +1974,9 @@ struct ProfileTab: View {
                                     action: { showingEditProfile = true }
                                 )
                                 
-                                LiveActivityToggleCard(isOn: $liveActivityEnabled)
+                                LiveActivityToggleCard(isOn: $liveActivityEnabled) {
+                                    showingDVGUPSAuth = true
+                                }
                                     .environmentObject(liveActivityManager)
                                 
                                 ProfileMenuItem(
@@ -2075,8 +2079,9 @@ struct ProfileTab: View {
 
 struct LiveActivityToggleCard: View {
     @EnvironmentObject private var liveActivityManager: LiveActivityManager
+    @ObservedObject private var authService = DVGUPSAuthService.shared
     @Binding var isOn: Bool
-    @State private var showingBackgroundInfo = false
+    let manageAuthAction: () -> Void
     
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -2109,10 +2114,27 @@ struct LiveActivityToggleCard: View {
                 }
             }
             
-            // Информация о фоновых обновлениях (только если включено)
-            if isOn {
+            if requiresAuthAttention {
                 Divider()
-                
+
+                VStack(alignment: .leading, spacing: 10) {
+                    Label("Для фоновых обновлений нужен вход в ЛК ДВГУПС", systemImage: "lock.shield.fill")
+                        .font(.subheadline.weight(.semibold))
+                        .foregroundStyle(.orange)
+
+                    Text("Без подключенного личного кабинета Live Activity сможет обновляться только пока приложение открыто и расписание уже загружено.")
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+
+                    Button(authService.storedLogin == nil ? "Подключить ЛК" : "Обновить доступ") {
+                        manageAuthAction()
+                    }
+                    .font(.footnote.weight(.semibold))
+                }
+            } else if isOn {
+                Divider()
+
                 BackgroundTasksInfoView()
             }
         }
@@ -2123,6 +2145,15 @@ struct LiveActivityToggleCard: View {
         )
         .onChange(of: isOn) { enabled in
             liveActivityManager.setEnabled(enabled)
+        }
+    }
+
+    private var requiresAuthAttention: Bool {
+        switch authService.status {
+        case .authenticated:
+            return false
+        case .unknown, .checking, .credentialsMissing, .failed:
+            return true
         }
     }
 }

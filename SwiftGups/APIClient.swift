@@ -43,6 +43,15 @@ enum APIError: Error, LocalizedError {
             return "Сервер вернул пустой ответ. Потяните вниз, чтобы обновить."
         }
     }
+
+    var isAuthenticationIssue: Bool {
+        switch self {
+        case .authenticationRequired, .invalidCredentials:
+            return true
+        default:
+            return false
+        }
+    }
 }
 
 /// API клиент для работы с расписанием ДВГУПС

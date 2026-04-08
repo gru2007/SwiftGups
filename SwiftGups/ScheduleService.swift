@@ -23,9 +23,26 @@ class ScheduleService: ObservableObject {
     enum ScheduleNotice: Equatable {
         case timeout(seconds: Int)
     }
+
+    enum RecoveryAction: Equatable {
+        case connectDVGUPSAccount
+        case refreshDVGUPSAccount
+
+        init?(apiError: APIError) {
+            switch apiError {
+            case .authenticationRequired:
+                self = .connectDVGUPSAccount
+            case .invalidCredentials:
+                self = .refreshDVGUPSAccount
+            default:
+                return nil
+            }
+        }
+    }
     
     /// Доп. уведомление (например, timeout 8 сек), показываем в верхней плашке.
     @Published var scheduleNotice: ScheduleNotice? = nil
+    @Published var recoveryAction: RecoveryAction? = nil
     
     @Published var isLoadingFaculties = false
     @Published var isLoadingGroups = false
@@ -67,7 +84,7 @@ class ScheduleService: ObservableObject {
     /// Загружает список институтов/факультетов с сервера
     func loadFaculties() async {
         isLoadingFaculties = true
-        errorMessage = nil
+        clearTransientState()
         
         do {
             let result = try await apiClient.fetchFaculties()
@@ -98,7 +115,7 @@ class ScheduleService: ObservableObject {
                 // По ТЗ: статический список больше не актуален — не используем его.
                 facultiesMissingIDs = []
                 didLoadFaculties = true
-                errorMessage = error.localizedDescription
+                applyErrorState(error)
             }
         }
         
@@ -114,7 +131,7 @@ class ScheduleService: ObservableObject {
         
         print("🔄 ScheduleService.loadGroups() started for faculty: \(faculty.id) (\(faculty.name))")
         isLoadingGroups = true
-        errorMessage = nil
+        clearTransientState()
         defer { isLoadingGroups = false }
         
         do {
@@ -143,10 +160,8 @@ class ScheduleService: ObservableObject {
             } else {
                 if let apiError = error as? APIError {
                     print("❌ API Error details: \(apiError)")
-                    errorMessage = apiError.localizedDescription
-                } else {
-                    errorMessage = error.localizedDescription
                 }
+                applyErrorState(error)
                 groups = []
             }
         }
@@ -158,7 +173,7 @@ class ScheduleService: ObservableObject {
     func loadGroups(for facultyId: String, date: Date? = nil) async {
         print("🔄 ScheduleService.loadGroups(for: \(facultyId)) started")
         isLoadingGroups = true
-        errorMessage = nil
+        clearTransientState()
         
         do {
             let fetchedGroups = try await apiClient.fetchGroups(for: facultyId)
@@ -172,7 +187,7 @@ class ScheduleService: ObservableObject {
             }
         } catch {
             print("❌ Error fetching groups for faculty \(facultyId): \(error.localizedDescription)")
-            errorMessage = error.localizedDescription
+            applyErrorState(error)
             groups = []
         }
         
@@ -188,7 +203,7 @@ class ScheduleService: ObservableObject {
         }
         
         isLoadingSchedule = true
-        errorMessage = nil
+        clearTransientState()
         
         do {
             let schedule = try await apiClient.fetchSchedule(
@@ -205,7 +220,7 @@ class ScheduleService: ObservableObject {
             } else {
                 scheduleNotice = nil
             }
-            errorMessage = error.localizedDescription
+            applyErrorState(error)
             currentSchedule = nil
         }
         
@@ -215,7 +230,7 @@ class ScheduleService: ObservableObject {
     /// Загружает расписание для конкретной группы и даты
     func loadSchedule(for groupId: String, startDate: Date, endDate: Date? = nil) async {
         isLoadingSchedule = true
-        errorMessage = nil
+        clearTransientState()
         
         do {
             let schedule = try await apiClient.fetchSchedule(
@@ -232,7 +247,7 @@ class ScheduleService: ObservableObject {
             } else {
                 scheduleNotice = nil
             }
-            errorMessage = error.localizedDescription
+            applyErrorState(error)
             currentSchedule = nil
         }
         
@@ -247,6 +262,7 @@ class ScheduleService: ObservableObject {
         currentSchedule = nil
         scheduleDataSource = .network
         scheduleNotice = nil
+        recoveryAction = nil
         groups = []
         isLoadingGroups = true
         
@@ -335,7 +351,7 @@ class ScheduleService: ObservableObject {
         }
         
         isLoadingSchedule = true
-        errorMessage = nil
+        clearTransientState()
         print("📆 Loading week schedule for group: \(group.id) from \(DateFormatter.apiDateFormatter.string(from: startOfWeek)) to \(DateFormatter.apiDateFormatter.string(from: endOfWeek))")
         defer { isLoadingSchedule = false }
         
@@ -376,7 +392,7 @@ class ScheduleService: ObservableObject {
                 } else {
                     scheduleNotice = nil
                 }
-                errorMessage = error.localizedDescription
+                applyErrorState(error)
                 currentSchedule = nil
                 print("❌ Failed to load week schedule: \(error.localizedDescription)")
             }
@@ -439,6 +455,21 @@ class ScheduleService: ObservableObject {
         } else if selectedFaculty != nil {
             // Иначе загружаем группы для выбранного факультета
             await loadGroups()
+        }
+    }
+
+    private func clearTransientState() {
+        errorMessage = nil
+        recoveryAction = nil
+    }
+
+    private func applyErrorState(_ error: Error) {
+        if let apiError = error as? APIError {
+            errorMessage = apiError.localizedDescription
+            recoveryAction = RecoveryAction(apiError: apiError)
+        } else {
+            errorMessage = error.localizedDescription
+            recoveryAction = nil
         }
     }
 }
