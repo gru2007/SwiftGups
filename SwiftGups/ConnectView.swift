@@ -674,7 +674,10 @@ class ConnectService: ObservableObject {
     @Published var connectionStatus: ConnectionStatus = .unknown
     // showKojimaEasterEgg перенесена в ConnectTab для локального управления
     
-    private let publicDatabase = CKContainer.default().publicCloudDatabase
+    /// `nil` без iCloud-entitlement: `CKContainer.default()` там падает фатально,
+    /// поэтому Connect работает полностью локально.
+    private let container: CKContainer? = AppEnvironment.isCloudKitAvailable ? .default() : nil
+    private var publicDatabase: CKDatabase? { container?.publicCloudDatabase }
     
     enum ConnectionStatus {
         case connected
@@ -741,13 +744,18 @@ class ConnectService: ObservableObject {
     
     /// Попытка синхронизации с CloudKit (безопасно, без ошибок)
     private func attemptCloudKitSync() async {
+        guard let container, let publicDatabase else {
+            os_log("📡 CloudKit недоступен в этой сборке — остаёмся в локальном режиме", log: .default, type: .info)
+            return
+        }
+
         do {
-            let accountStatus = try await CKContainer.default().accountStatus()
+            let accountStatus = try await container.accountStatus()
             guard accountStatus == .available else {
                 os_log("📡 CloudKit account not available for sync", log: .default, type: .info)
                 return
             }
-            
+
             // Простая попытка подсчета записей
             let query = CKQuery(recordType: "ConnectLike", predicate: NSPredicate(format: "TRUEPREDICATE"))
             let result = try await publicDatabase.records(matching: query)
@@ -813,19 +821,25 @@ class ConnectService: ObservableObject {
     }
     
     private func syncWithCloudKit() async {
+        guard let container, let publicDatabase else {
+            connectionStatus = .offline
+            os_log("CloudKit недоступен в этой сборке, работаем в автономном режиме", log: .default, type: .info)
+            return
+        }
+
         let deviceId = await getDeviceIdentifier()
         let like = ConnectLike(deviceIdentifier: deviceId)
-        
+
         do {
             // Проверяем статус аккаунта
-            let accountStatus = try await CKContainer.default().accountStatus()
-            
+            let accountStatus = try await container.accountStatus()
+
             guard accountStatus == .available else {
                 connectionStatus = .offline
                 os_log("CloudKit недоступен, работаем в автономном режиме", log: .default, type: .info)
                 return
             }
-            
+
             // Пытаемся сохранить в CloudKit
             let record = like.toCKRecord()
             _ = try await publicDatabase.save(record)
