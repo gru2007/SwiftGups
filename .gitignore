@@ -1,0 +1,9 @@
+# Сборка (в том числе то, что складывает Scripts/build-ipa.sh)
+.build/
+build/
+DerivedData/
+*.ipa
+*.xcarchive
+
+# macOS
+.DS_Store
