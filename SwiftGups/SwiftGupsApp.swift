@@ -53,17 +53,29 @@ struct SwiftGupsApp: App {
     
     private static func createModelContainer() -> ModelContainer {
         let schema = Schema([User.self, Homework.self])
-        
+
+        // Имя хранилища одно и то же с зеркалированием и без него: иначе при
+        // переключении режима данные пользователя «пропадают» — открылся бы
+        // другой файл. CoreData спокойно открывает store с метаданными
+        // CloudKit и без самого зеркалирования.
+        let cloudKitDatabase: ModelConfiguration.CloudKitDatabase = AppEnvironment.isCloudKitAvailable
+            ? .private("iCloud.tech.artemev.swiftgups")
+            : .none
+
         let modelConfiguration = ModelConfiguration(
             "SwiftGupsModel",
             schema: schema,
             isStoredInMemoryOnly: false,
-            cloudKitDatabase: .private("iCloud.tech.artemev.swiftgups")
+            cloudKitDatabase: cloudKitDatabase
         )
-        
+
         do {
             let container = try ModelContainer(for: schema, configurations: [modelConfiguration])
-            print("✅ SwiftData container created with CloudKit sync enabled")
+            if AppEnvironment.isCloudKitAvailable {
+                print("✅ SwiftData container created with CloudKit sync enabled")
+            } else {
+                print("ℹ️ SwiftData container created without CloudKit (нет entitlements)")
+            }
             return container
         } catch {
             print("❌ Failed to create CloudKit container: \(error)")
@@ -126,7 +138,11 @@ private enum DebugMenuEnvironment {
     }
     
     static var isEnabled: Bool {
-        isDebug || isTestFlight
+        // В LiveContainer `appStoreReceiptURL` принадлежит хосту, поэтому
+        // проверка на TestFlight там ложно срабатывает, а обработчик крэшей
+        // DebugSwift падает сам (dladdr по чужим образам).
+        guard !AppEnvironment.isLiveContainerBuild else { return false }
+        return isDebug || isTestFlight
     }
 }
 

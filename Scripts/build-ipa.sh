@@ -59,6 +59,10 @@ BUILD_SETTINGS=(
   CODE_SIGN_ENTITLEMENTS=""
   DEVELOPMENT_TEAM=""
   PROVISIONING_PROFILE_SPECIFIER=""
+  # Без подписи в бинарник не попадают entitlements, а CloudKit без них падает
+  # фатально на своей очереди — do/catch это не ловит. Флаг выключает CloudKit
+  # в коде (см. AppEnvironment).
+  'SWIFT_ACTIVE_COMPILATION_CONDITIONS=$(inherited) LIVECONTAINER'
 )
 
 STAGE="$(mktemp -d)"
