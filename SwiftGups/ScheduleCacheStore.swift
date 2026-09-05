@@ -9,6 +9,10 @@ struct ScheduleCacheStore {
         case faculties
         case groups(facultyId: String)
         case schedule(groupId: String, weekStart: String) // yyyy-MM-dd
+        /// Полный справочник групп из нового API (`/groups/options`).
+        case groupDirectory
+        /// Календарь учебных недель из нового API (`/timetable/weeks`).
+        case weeks
     }
     
     private let fileManager = FileManager.default
@@ -50,6 +54,10 @@ struct ScheduleCacheStore {
             filename = "groups_faculty_\(sanitize(facultyId)).json"
         case .schedule(let groupId, let weekStart):
             filename = "schedule_group_\(sanitize(groupId))_week_\(sanitize(weekStart)).json"
+        case .groupDirectory:
+            filename = "group_directory.json"
+        case .weeks:
+            filename = "weeks.json"
         }
         return baseDirectory.appendingPathComponent(filename)
     }
