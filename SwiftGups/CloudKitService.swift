@@ -15,6 +15,10 @@ class CloudKitService: ObservableObject {
     }
     
     var statusDescription: String {
+        if let reason = AppEnvironment.cloudKitUnavailableReason {
+            return reason
+        }
+
         switch accountStatus {
         case .available:
             return "Синхронизация с iCloud активна"
@@ -32,6 +36,8 @@ class CloudKitService: ObservableObject {
     }
     
     var statusIcon: String {
+        guard AppEnvironment.isCloudKitAvailable else { return "icloud.slash" }
+
         switch accountStatus {
         case .available:
             return "icloud.and.arrow.up"
@@ -47,6 +53,8 @@ class CloudKitService: ObservableObject {
     }
     
     var statusColor: Color {
+        guard AppEnvironment.isCloudKitAvailable else { return .secondary }
+
         switch accountStatus {
         case .available:
             return .green
@@ -61,10 +69,17 @@ class CloudKitService: ObservableObject {
         }
     }
     
-    private let container = CKContainer.default()
+    /// `nil`, когда у сборки нет iCloud-entitlement: `CKContainer.default()`
+    /// в таком случае падает фатально, поэтому его нельзя даже создавать.
+    private let container: CKContainer? = AppEnvironment.isCloudKitAvailable ? .default() : nil
     private var accountStatusObserver: NSObjectProtocol?
-    
+
     init() {
+        guard AppEnvironment.isCloudKitAvailable else {
+            os_log("ℹ️ CloudKit выключен: у сборки нет iCloud entitlements", log: .default, type: .info)
+            return
+        }
+
         Task {
             await checkAccountStatus()
             await setupPublicDatabase()
@@ -84,6 +99,8 @@ class CloudKitService: ObservableObject {
     }
     
     func checkAccountStatus() async {
+        guard let container else { return }
+
         do {
             let status = try await container.accountStatus()
             accountStatus = status
@@ -117,8 +134,9 @@ class CloudKitService: ObservableObject {
     
     /// Настройка публичной базы данных для Connect
     private func setupPublicDatabase() async {
+        guard let container else { return }
         let publicDatabase = container.publicCloudDatabase
-        
+
         do {
             // Проверяем доступность публичной базы
             let query = CKQuery(recordType: "ConnectLike", predicate: NSPredicate(format: "FALSEPREDICATE"))
@@ -140,8 +158,9 @@ class CloudKitService: ObservableObject {
     
     /// Создание начальной схемы для ConnectLike в Development режиме
     private func createInitialSchemaIfNeeded() async {
+        guard let container else { return }
         let publicDatabase = container.publicCloudDatabase
-        
+
         // Создаём тестовую запись, которая автоматически создаст схему
         let testRecord = CKRecord(recordType: "ConnectLike")
         testRecord["timestamp"] = Date() as NSDate
