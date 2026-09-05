@@ -340,7 +340,9 @@ struct UserInfoHeader: View {
                     .font(.headline)
                     .foregroundColor(.primary)
                 
-                Text("\(user.groupName), \(user.facultyName)")
+                // Институт может быть неизвестен: группу выбирают поиском,
+                // и её факультета может не оказаться в справочнике.
+                Text([user.groupName, user.facultyName].filter { !$0.isEmpty }.joined(separator: ", "))
                     .font(.caption)
                     .foregroundColor(.secondary)
                     .lineLimit(1)
@@ -2271,11 +2273,13 @@ struct ProfileHeader: View {
                     .font(.headline)
                     .foregroundColor(.blue)
                 
-                Text(user.facultyName)
-                    .font(.subheadline)
-                    .foregroundColor(.secondary)
-                    .multilineTextAlignment(.center)
-                    .lineLimit(2)
+                if !user.facultyName.isEmpty {
+                    Text(user.facultyName)
+                        .font(.subheadline)
+                        .foregroundColor(.secondary)
+                        .multilineTextAlignment(.center)
+                        .lineLimit(2)
+                }
             }
         }
         .padding()
@@ -2335,8 +2339,6 @@ struct EditProfileSheet: View {
     @State private var name: String
     @State private var selectedFaculty: Faculty?
     @State private var selectedGroup: Group?
-    @State private var facultySearchText: String = ""
-    @State private var groupSearchText: String = ""
     @StateObject private var scheduleService = ScheduleService()
     @FocusState private var isNameFieldFocused: Bool
     
@@ -2344,14 +2346,6 @@ struct EditProfileSheet: View {
         self.user = user
         _name = State(initialValue: user.name)
         _selectedFaculty = State(initialValue: nil)
-    }
-    
-    private var filteredFaculties: [Faculty] {
-        scheduleService.filteredFaculties(searchText: facultySearchText)
-    }
-    
-    private var filteredGroups: [Group] {
-        scheduleService.filteredGroups(searchText: groupSearchText)
     }
     
     var body: some View {
@@ -2371,111 +2365,19 @@ struct EditProfileSheet: View {
                     }
                     .padding(.horizontal)
                     
-                    // Учебная информация
+                    // Учебная информация: институт выбирать не нужно,
+                    // справочник групп общий для вуза и техникумов.
                     VStack(alignment: .leading, spacing: 12) {
                         Text("Учебная информация")
                             .font(.headline)
-                            .foregroundColor(.primary)
-                        
-                        // Выбор факультета
-                        VStack(alignment: .leading, spacing: 8) {
-                            HStack {
-                                Image(systemName: "building.2.fill")
-                                    .foregroundColor(.blue)
-                                Text("Институт/Факультет")
-                                    .font(.subheadline)
-                                    .foregroundColor(.primary)
-                            }
-                            
-                            // Поле поиска
-                            SearchBar(text: $facultySearchText, placeholder: "Поиск института...")
-                            
-                            if scheduleService.isLoadingFaculties {
-                                HStack {
-                                    Spacer()
-                                    ProgressView("Загрузка...")
-                                        .foregroundColor(.secondary)
-                                    Spacer()
-                                }
-                                .padding()
-                            } else if filteredFaculties.isEmpty && !scheduleService.faculties.isEmpty {
-                                Text("Институты не найдены")
-                                    .foregroundColor(.secondary)
-                                    .frame(maxWidth: .infinity, alignment: .center)
-                                    .padding()
-                            } else if !scheduleService.faculties.isEmpty {
-                                // Список институтов
-                                LazyVGrid(columns: [
-                                    GridItem(.flexible()),
-                                    GridItem(.flexible())
-                                ], spacing: 12) {
-                                    ForEach(filteredFaculties) { faculty in
-                                        FacultySelectionCard(
-                                            faculty: faculty,
-                                            isSelected: selectedFaculty?.id == faculty.id
-                                        ) {
-                                            selectedFaculty = faculty
-                                            scheduleService.selectFaculty(faculty)
-                                        }
-                                    }
-                                }
-                            }
-                            
-                            if !scheduleService.facultiesMissingIDs.isEmpty {
-                                FacultyMissingIdBanner(missingNames: scheduleService.facultiesMissingIDs)
-                                    .padding(.top, 8)
-                            }
-                        }
-                        
-                        // Выбор группы
-                        if selectedFaculty != nil {
-                            VStack(alignment: .leading, spacing: 8) {
-                                HStack {
-                                    Image(systemName: "person.3.fill")
-                                        .foregroundColor(.blue)
-                                    Text("Группа")
-                                        .font(.subheadline)
-                                        .foregroundColor(.primary)
-                                }
-                                
-                                // Поле поиска
-                                SearchBar(text: $groupSearchText, placeholder: "Поиск группы...")
-                                
-                                if scheduleService.isLoadingGroups {
-                                    HStack {
-                                        Spacer()
-                                        ProgressView("Загрузка...")
-                                            .foregroundColor(.secondary)
-                                        Spacer()
-                                    }
-                                    .padding()
-                                } else if filteredGroups.isEmpty && scheduleService.selectedFaculty != nil {
-                                    Text("Группы не найдены")
-                                        .foregroundColor(.secondary)
-                                        .frame(maxWidth: .infinity, alignment: .center)
-                                        .padding()
-                                } else {
-                                    // Список групп — показываем все карточки, не сбрасываем поиск при выборе
-                                    LazyVGrid(columns: [
-                                        GridItem(.flexible()),
-                                        GridItem(.flexible())
-                                    ], spacing: 12) {
-                                        ForEach(filteredGroups) { group in
-                                            GroupSelectionCard(
-                                                group: group,
-                                                isSelected: selectedGroup?.id == group.id
-                                            ) {
-                                                selectedGroup = group
-                                            }
-                                        }
-                                    }
-                                }
+                            .foregroundStyle(.primary)
 
-                                GroupSearchFooter(
-                                    scheduleService: scheduleService,
-                                    searchText: groupSearchText
-                                )
-                            }
+                        GroupPicker(
+                            scheduleService: scheduleService,
+                            selectedGroupId: selectedGroup?.id
+                        ) { group in
+                            selectedGroup = group
+                            selectedFaculty = scheduleService.faculties.first { $0.id == group.facultyId }
                         }
                     }
                     .padding(.horizontal)
@@ -2502,16 +2404,6 @@ struct EditProfileSheet: View {
                     .disabled(!canSave)
                 }
             }
-            .onChange(of: selectedFaculty) { newFaculty in
-                if let faculty = newFaculty {
-                    scheduleService.selectFaculty(faculty)
-                    selectedGroup = nil
-                    groupSearchText = ""
-                }
-            }
-            .onChange(of: groupSearchText) { newValue in
-                scheduleService.searchGroups(query: newValue)
-            }
             .onDisappear {
                 // Закрываем клавиатуру при выходе
                 isNameFieldFocused = false
@@ -2519,47 +2411,41 @@ struct EditProfileSheet: View {
             }
         }
         .task {
-            await scheduleService.ensureFacultiesLoaded()
-            
-            // Проставляем текущий факультет пользователя из динамического списка (или как fallback — из статического)
-            if selectedFaculty == nil {
-                selectedFaculty =
-                    scheduleService.faculties.first(where: { $0.id == user.facultyId }) ??
-                    Faculty.allFaculties.first(where: { $0.id == user.facultyId })
-            }
-            
-            if let faculty = selectedFaculty {
-                scheduleService.selectFaculty(faculty)
-                await scheduleService.loadGroups()
-                selectedGroup = scheduleService.groups.first { $0.id == user.groupId }
+            await scheduleService.ensureGroupDirectoryLoaded()
+
+            // Восстанавливаем текущую группу пользователя из общего справочника.
+            if selectedGroup == nil {
+                selectedGroup = scheduleService.group(id: user.groupId, name: user.groupName)
+                selectedFaculty = selectedGroup.flatMap { group in
+                    scheduleService.faculties.first { $0.id == group.facultyId }
+                }
             }
         }
     }
     
     private var canSave: Bool {
+        // Институт больше не обязателен: он выводится из выбранной группы.
         !name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty &&
-        selectedFaculty != nil &&
         selectedGroup != nil
     }
     
     private func saveChanges() {
-        guard let faculty = selectedFaculty,
-              let group = selectedGroup else { return }
-        
+        guard let group = selectedGroup else { return }
+
         // Закрываем клавиатуру перед сохранением
         isNameFieldFocused = false
         UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
-        
+
         user.name = name.trimmingCharacters(in: .whitespacesAndNewlines)
-        // Группа могла прийти из поиска по всему вузу — тогда её институт
-        // не совпадает с выбранным в списке, и сохранять надо институт группы.
-        let groupFaculty = scheduleService.faculties.first { $0.id == group.facultyId }
+
+        // Институт берём у самой группы: отдельно его больше не выбирают.
+        let faculty = scheduleService.faculties.first { $0.id == group.facultyId } ?? selectedFaculty
         user.updateFaculty(
-            facultyId: groupFaculty?.id ?? faculty.id,
-            facultyName: groupFaculty?.name ?? faculty.name
+            facultyId: faculty?.id ?? group.facultyId,
+            facultyName: faculty?.name ?? ""
         )
         user.updateGroup(groupId: group.id, groupName: group.name)
-        
+
         do {
             try modelContext.save()
             dismiss()
@@ -2871,127 +2757,6 @@ struct NewsDetailSheet: View {
     }
 }
 #endif
-
-// MARK: - Shared Components for Profile Editing
-
-struct SearchBar: View {
-    @Binding var text: String
-    let placeholder: String
-    
-    var body: some View {
-        HStack {
-            Image(systemName: "magnifyingglass")
-                .foregroundColor(.secondary)
-            
-            TextField(placeholder, text: $text)
-                .textFieldStyle(PlainTextFieldStyle())
-            
-            if !text.isEmpty {
-                Button("Очистить") {
-                    text = ""
-                }
-                .font(.caption)
-                .foregroundColor(.blue)
-            }
-        }
-        .frame(height: 44)
-        .padding(.horizontal, 12)
-        .background(
-            RoundedRectangle(cornerRadius: 12)
-                .fill(Color(.systemGray6))
-                .stroke(Color(.systemGray4), lineWidth: 1)
-        )
-    }
-}
-
-struct FacultySelectionCard: View {
-    let faculty: Faculty
-    let isSelected: Bool
-    let action: () -> Void
-    
-    var body: some View {
-        Button(action: {
-            let impactFeedback = UIImpactFeedbackGenerator(style: .light)
-            impactFeedback.impactOccurred()
-            
-            withAnimation(.easeInOut(duration: 0.2)) {
-                action()
-            }
-        }) {
-            VStack(alignment: .leading, spacing: 8) {
-                Text(faculty.name)
-                    .font(.subheadline)
-                    .fontWeight(.medium)
-                    .foregroundColor(isSelected ? .white : .primary)
-                    .lineLimit(3)
-                    .multilineTextAlignment(.leading)
-                
-                Spacer()
-            }
-            .frame(height: 80)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(12)
-            .background(
-                RoundedRectangle(cornerRadius: 12)
-                    .fill(
-                        isSelected
-                        ? LinearGradient(colors: [.blue, .purple], startPoint: .topLeading, endPoint: .bottomTrailing)
-                        : LinearGradient(colors: [Color(.systemGray6)], startPoint: .topLeading, endPoint: .bottomTrailing)
-                    )
-                    .shadow(color: isSelected ? .blue.opacity(0.3) : .clear, radius: 5, x: 0, y: 2)
-            )
-        }
-        .scaleEffect(isSelected ? 1.02 : 1.0)
-        .animation(.easeInOut(duration: 0.2), value: isSelected)
-    }
-}
-
-struct GroupSelectionCard: View {
-    let group: Group
-    let isSelected: Bool
-    let action: () -> Void
-    
-    var body: some View {
-        Button(action: {
-            let impactFeedback = UIImpactFeedbackGenerator(style: .light)
-            impactFeedback.impactOccurred()
-            
-            withAnimation(.easeInOut(duration: 0.2)) {
-                action()
-            }
-        }) {
-            VStack(alignment: .leading, spacing: 8) {
-                Text(group.name)
-                    .font(.subheadline)
-                    .fontWeight(.semibold)
-                    .foregroundColor(isSelected ? .white : .primary)
-                    .lineLimit(1)
-                
-                Text(group.fullName)
-                    .font(.caption)
-                    .foregroundColor(isSelected ? .white.opacity(0.8) : .secondary)
-                    .lineLimit(2)
-                    .multilineTextAlignment(.leading)
-                
-                Spacer()
-            }
-            .frame(height: 80)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(12)
-            .background(
-                RoundedRectangle(cornerRadius: 12)
-                    .fill(
-                        isSelected
-                        ? LinearGradient(colors: [.blue, .purple], startPoint: .topLeading, endPoint: .bottomTrailing)
-                        : LinearGradient(colors: [Color(.systemGray6)], startPoint: .topLeading, endPoint: .bottomTrailing)
-                    )
-                    .shadow(color: isSelected ? .blue.opacity(0.3) : .clear, radius: 5, x: 0, y: 2)
-            )
-        }
-        .scaleEffect(isSelected ? 1.02 : 1.0)
-        .animation(.easeInOut(duration: 0.2), value: isSelected)
-    }
-}
 
 #Preview {
     let config = ModelConfiguration(isStoredInMemoryOnly: true)

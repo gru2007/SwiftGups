@@ -213,6 +213,55 @@ class DVGUPSAPIClient: ObservableObject {
         return directory
     }
 
+    /// Единый справочник групп: вуз плюс техникумы ассоциации.
+    ///
+    /// Группы вуза переехали в `/groups/options`, техникумы остались на старом
+    /// `/groups/by-faculty`, и объединить их может только клиент. Одним списком
+    /// они становятся пригодны для общего поиска — пользователю не нужно
+    /// заранее знать, на каком API живёт его группа.
+    ///
+    /// Метод не бросает: частичный справочник полезнее пустого, поэтому упавшие
+    /// факультеты просто не попадают в результат.
+    func fetchCombinedGroupDirectory(faculties: [Faculty]) async -> [Group] {
+        var collected: [Group] = []
+        var seenIds = Set<String>()
+
+        func append(_ groups: [Group]) {
+            for group in groups where seenIds.insert(group.id).inserted {
+                collected.append(group)
+            }
+        }
+
+        // 1. Новый справочник вуза — основная масса групп.
+        let directory = (try? await fetchGroupDirectory()) ?? []
+        append(directory)
+
+        // 2. Факультеты, которых в новом справочнике нет, — техникумы на старом API.
+        let coveredFacultyIds = Set(directory.map { $0.facultyId }.filter { !$0.isEmpty })
+        let legacyFaculties = faculties.filter { !coveredFacultyIds.contains($0.id) }
+
+        if !legacyFaculties.isEmpty {
+            let legacyGroups = await withTaskGroup(of: [Group].self) { group in
+                for faculty in legacyFaculties {
+                    group.addTask { [weak self] in
+                        guard let self else { return [] }
+                        return (try? await self.fetchLegacyGroups(for: faculty.id)) ?? []
+                    }
+                }
+
+                var result: [Group] = []
+                for await groups in group {
+                    result.append(contentsOf: groups)
+                }
+                return result
+            }
+
+            append(legacyGroups)
+        }
+
+        return collected.sorted { $0.name.localizedCompare($1.name) == .orderedAscending }
+    }
+
     /// Список групп факультета/института.
     ///
     /// Группы вуза живут в новом справочнике `/groups/options`, техникумы
