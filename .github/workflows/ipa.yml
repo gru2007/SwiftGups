@@ -1,0 +1,104 @@
+name: IPA
+
+# Собирает неподписанный .ipa для LiveContainer.
+# Подписи нет намеренно: LiveContainer подписывает гостевое приложение сам.
+
+on:
+  push:
+    branches: ["main"]
+    tags: ["v*"]
+  pull_request:
+    branches: ["main"]
+  workflow_dispatch:
+    inputs:
+      keep_plugins:
+        description: "Оставить виджет (PlugIns) в бандле"
+        type: choice
+        options: ["1", "0"]
+        default: "1"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ipa-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: Неподписанный .ipa
+    runs-on: macos-15
+    timeout-minutes: 60
+    permissions:
+      # Нужно только шагу публикации релиза по тегу.
+      contents: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Выбрать Xcode
+        # Проект в формате Xcode 16+ (objectVersion 77), App Clip требует SDK iOS 18.5,
+        # поэтому берём самый свежий стабильный Xcode на раннере.
+        run: |
+          latest="$(ls -d /Applications/Xcode_*.app 2>/dev/null | grep -vi beta | sort -V | tail -1)"
+          if [ -n "$latest" ]; then
+            sudo xcode-select -s "$latest"
+          fi
+          xcodebuild -version
+
+      - name: Кэш зависимостей SPM
+        uses: actions/cache@v4
+        with:
+          path: .build/DerivedData/SourcePackages
+          key: spm-${{ runner.os }}-${{ hashFiles('**/Package.resolved') }}
+          restore-keys: spm-${{ runner.os }}-
+
+      - name: Собрать .ipa
+        id: build
+        env:
+          # Версия берётся из проекта, номер сборки — из счётчика запусков,
+          # чтобы LiveContainer видел обновление.
+          BUILD_NUMBER: ${{ github.run_number }}
+          KEEP_PLUGINS: ${{ inputs.keep_plugins || '1' }}
+        run: Scripts/build-ipa.sh
+
+      - name: Загрузить артефакт
+        uses: actions/upload-artifact@v4
+        with:
+          name: SwiftGups-${{ steps.build.outputs.version }}-${{ steps.build.outputs.build }}-unsigned-ipa
+          path: ${{ steps.build.outputs.ipa-path }}
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Итоги сборки
+        run: |
+          {
+            echo "## SwiftGups ${{ steps.build.outputs.version }} (${{ steps.build.outputs.build }})"
+            echo
+            echo "| | |"
+            echo "|---|---|"
+            echo "| Файл | \`${{ steps.build.outputs.ipa-name }}\` |"
+            echo "| Bundle ID | \`${{ steps.build.outputs.bundle-id }}\` |"
+            echo "| Подпись | нет — LiveContainer подписывает сам |"
+            echo
+            echo "Установка: скачайте артефакт, распакуйте .zip и добавьте .ipa в LiveContainer."
+            echo
+            echo "> Без подписи не работают iCloud/CloudKit, App Groups и пуши —"
+            echo "> entitlements выдаёт LiveContainer, а не сборка."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Опубликовать релиз
+        if: startsWith(github.ref, 'refs/tags/v')
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+          IPA: ${{ steps.build.outputs.ipa-path }}
+        run: |
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release upload "$TAG" "$IPA" --clobber
+          else
+            gh release create "$TAG" "$IPA" \
+              --title "$TAG" \
+              --notes "Неподписанный .ipa для LiveContainer. Подпись выдаёт LiveContainer, поэтому iCloud/CloudKit, App Groups и пуши в этой сборке недоступны."
+          fi

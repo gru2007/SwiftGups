@@ -306,41 +306,16 @@ struct ScheduleTab: View {
             return
         }
 
-        await scheduleService.ensureFacultiesLoaded()
-        
-        guard let faculty =
-                scheduleService.faculties.first(where: { $0.id == userId }) ??
-                Faculty.allFaculties.first(where: { $0.id == userId }) else {
-            print("❌ Faculty not found for user: \(userId)")
-            return
-        }
+        print("✅ Setting up schedule for user: \(userName), faculty: \(userId), group: \(userGroupId) (\(userGroupName))")
 
-        print("✅ Setting up schedule for user: \(userName), faculty: \(faculty.name), group: \(userGroupId)")
-        
-        // Устанавливаем факультет напрямую без вызова selectFaculty (чтобы избежать двойной загрузки)
-        scheduleService.selectedFaculty = faculty
-        scheduleService.selectedGroup = nil
-        scheduleService.currentSchedule = nil
-        scheduleService.groups = []
-        
-        // Загружаем группы и затем выбираем нужную
-        print("🔄 Loading groups for faculty: \(faculty.id)")
-        await scheduleService.loadGroups()
-            
-        print("📋 Loaded \(scheduleService.groups.count) groups")
-            
-        if let group = scheduleService.groups.first(where: { $0.id == userGroupId }) {
-            print("✅ Found user's group: \(group.name)")
-            scheduleService.selectGroup(group)
-        } else {
-            print("⚠️ User's group not found in loaded groups. Available groups:")
-            for group in scheduleService.groups.prefix(5) {
-                print("   - \(group.id): \(group.name)")
-            }
-            if let errorMessage = scheduleService.errorMessage {
-                print("❌ Error loading groups: \(errorMessage)")
-            }
-        }
+        // Восстановление переживает переезд групп вуза на новый справочник:
+        // если группа больше не числится за сохранённым институтом, её найдут
+        // в общем справочнике или загрузят расписание по сохранённому ID.
+        await scheduleService.restoreSelection(
+            facultyId: userId,
+            groupId: userGroupId,
+            groupName: userGroupName
+        )
     }
 }
 
@@ -2495,6 +2470,11 @@ struct EditProfileSheet: View {
                                         }
                                     }
                                 }
+
+                                GroupSearchFooter(
+                                    scheduleService: scheduleService,
+                                    searchText: groupSearchText
+                                )
                             }
                         }
                     }
@@ -2528,6 +2508,9 @@ struct EditProfileSheet: View {
                     selectedGroup = nil
                     groupSearchText = ""
                 }
+            }
+            .onChange(of: groupSearchText) { newValue in
+                scheduleService.searchGroups(query: newValue)
             }
             .onDisappear {
                 // Закрываем клавиатуру при выходе
@@ -2568,7 +2551,13 @@ struct EditProfileSheet: View {
         UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
         
         user.name = name.trimmingCharacters(in: .whitespacesAndNewlines)
-        user.updateFaculty(facultyId: faculty.id, facultyName: faculty.name)
+        // Группа могла прийти из поиска по всему вузу — тогда её институт
+        // не совпадает с выбранным в списке, и сохранять надо институт группы.
+        let groupFaculty = scheduleService.faculties.first { $0.id == group.facultyId }
+        user.updateFaculty(
+            facultyId: groupFaculty?.id ?? faculty.id,
+            facultyName: groupFaculty?.name ?? faculty.name
+        )
         user.updateGroup(groupId: group.id, groupName: group.name)
         
         do {

@@ -84,6 +84,36 @@
 
 ---
 
+## 📦 Сборка .ipa для LiveContainer
+
+Workflow [`IPA`](.github/workflows/ipa.yml) собирает **неподписанный** `.ipa` — именно такой ждёт LiveContainer, который подписывает гостевое приложение сам.
+
+Когда запускается:
+
+| Событие | Что делает |
+|---|---|
+| push в `main`, pull request в `main` | собирает и кладёт `.ipa` в артефакты запуска |
+| тег `v*` | то же плюс публикует `.ipa` в релиз |
+| «Run workflow» вручную | то же, можно выключить виджет (`keep_plugins: 0`) |
+
+Локально то же самое:
+
+```bash
+Scripts/build-ipa.sh                 # .build/artifacts/SwiftGups-<версия>-<сборка>-unsigned.ipa
+BUILD_NUMBER=42 Scripts/build-ipa.sh # свой CFBundleVersion
+KEEP_PLUGINS=0 Scripts/build-ipa.sh  # без виджета и Live Activity
+```
+
+Что происходит при упаковке:
+
+- сборка идёт с `CODE_SIGNING_ALLOWED=NO` — подписи и `embedded.mobileprovision` в бандле нет;
+- **App Clip вырезается**: в LiveContainer он не запускается и сайдлоадить его нельзя;
+- виджет (`PlugIns/`) остаётся — приложению он не мешает, хотя сам в LiveContainer обычно не работает.
+
+> **Что не работает в такой сборке.** Без подписи в бинарник не попадают entitlements, поэтому iCloud/CloudKit-синхронизация, App Groups и пуши не поднимутся, пока LiveContainer не выдаст свои. Расписание, кэш и домашние задания на устройстве работают как обычно.
+
+---
+
 ## ⚠️ Известные ограничения
 
 1. **Зависимость от внешнего API**: приложение полностью зависит от доступности сайта `dvgups.ru`

@@ -317,7 +317,14 @@ struct DateSelectionView: View {
                     Text(scheduleService.currentWeekRange())
                         .font(.headline)
                         .foregroundColor(.primary)
-                    
+
+                    // Номер учебной недели приходит из календаря вуза (новый API)
+                    if let weekTitle = scheduleService.currentWeekTitle {
+                        Text(weekTitle)
+                            .font(.caption2)
+                            .foregroundColor(.secondary)
+                    }
+
                     Button("Сегодня") {
                         let impactFeedback = UIImpactFeedbackGenerator(style: .light)
                         impactFeedback.impactOccurred()
@@ -506,6 +513,8 @@ struct GroupSelectionView: View {
                 }
                 .padding(.horizontal)
             }
+
+            GroupSearchFooter(scheduleService: scheduleService, searchText: searchText)
         }
         .padding()
         .background(
@@ -518,6 +527,9 @@ struct GroupSelectionView: View {
         }
         .onChange(of: scheduleService.isLoadingGroups) { newValue in
             updateVPNHint(isLoading: newValue)
+        }
+        .onChange(of: searchText) { newValue in
+            scheduleService.searchGroups(query: newValue)
         }
     }
 
@@ -1358,7 +1370,7 @@ struct LessonView: View {
                             .fontWeight(.bold)
                             .foregroundColor(lessonTypeColor)
                         
-                        Text(lesson.type.rawValue.capitalized)
+                        Text(lesson.typeTitle.capitalized)
                             .font(.system(size: 9))
                             .foregroundColor(lessonTypeColor)
                             .fontWeight(.medium)
@@ -1455,7 +1467,7 @@ struct LessonView: View {
                     }
                     
                     // Тип занятия
-                    Text(lesson.type.rawValue)
+                    Text(lesson.typeTitle)
                         .font(.caption)
                         .padding(.horizontal, 6)
                         .padding(.vertical, 2)
@@ -1682,7 +1694,7 @@ struct LessonDetailSheet: View {
                             .foregroundColor(.primary)
                         
                         HStack {
-                            Text(lesson.type.rawValue)
+                            Text(lesson.typeTitle)
                                 .font(.subheadline)
                                 .fontWeight(.semibold)
                                 .foregroundColor(lessonTypeColor)
@@ -1725,16 +1737,16 @@ struct LessonDetailSheet: View {
                             )
                         }
                         
-                        // Преподаватель
-                        if let teacher = lesson.teacher {
+                        // Преподаватель (в новом формате их может быть несколько)
+                        if !lesson.teacherNames.isEmpty {
                             InfoRow(
                                 icon: "person",
-                                title: "Преподаватель",
-                                value: teacher.name,
+                                title: lesson.teacherNames.count > 1 ? "Преподаватели" : "Преподаватель",
+                                value: lesson.teacherNames.joined(separator: ", "),
                                 color: .purple
                             )
-                            
-                            if let email = teacher.email {
+
+                            if let email = lesson.teacher?.email {
                                 InfoRow(
                                     icon: "envelope",
                                     title: "Email",

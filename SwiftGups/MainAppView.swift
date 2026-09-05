@@ -369,8 +369,13 @@ struct RegistrationView: View {
         
         showingProgress = true
 
-        let facultyId = selectedFaculty?.id ?? ""
-        let facultyName = selectedFaculty?.name ?? ""
+        // Группа могла прийти из поиска по всему вузу — тогда её институт
+        // не совпадает с выбранным в списке, и сохранять надо институт группы.
+        let groupFaculty = selectedGroup.flatMap { group in
+            scheduleService.faculties.first { $0.id == group.facultyId }
+        }
+        let facultyId = groupFaculty?.id ?? selectedFaculty?.id ?? ""
+        let facultyName = groupFaculty?.name ?? selectedFaculty?.name ?? ""
 
         // Создаем пользователя, даже если институт/группа не выбраны
         let newUser = User(
@@ -633,12 +638,17 @@ struct GroupPickerView: View {
                     }
                 }
             }
+
+            GroupSearchFooter(scheduleService: scheduleService, searchText: searchText)
         }
         .onAppear {
             updateVPNHint(isLoading: scheduleService.isLoadingGroups)
         }
         .onChange(of: scheduleService.isLoadingGroups) { newValue in
             updateVPNHint(isLoading: newValue)
+        }
+        .onChange(of: searchText) { newValue in
+            scheduleService.searchGroups(query: newValue)
         }
     }
 

@@ -68,7 +68,9 @@ class DVGUPSAPIClient: ObservableObject {
     private let session: URLSession
     private let authService: DVGUPSAuthService
     private let requestTimeoutSeconds: TimeInterval = 8
-    
+    /// Справочник групп нового API — выгружается постранично, поэтому кэшируем на время сессии.
+    private var cachedGroupDirectory: [Group]?
+
     // MARK: - Инициализация
     
     init(session: URLSession = .shared, authService: DVGUPSAuthService = .shared) {
@@ -147,14 +149,109 @@ class DVGUPSAPIClient: ObservableObject {
         )
     }
     
-    /// Получает список групп для выбранного факультета/института
-    func fetchGroups(for facultyId: String) async throws -> [Group] {
-        struct GroupDTO: Decodable {
-            let id: String
-            let name: String
-            let field: String
+    /// Размер страницы при полной выгрузке справочника групп.
+    private static let groupDirectoryPageSize = 200
+    /// Максимум страниц: страховка от бесконечного цикла,
+    /// если сервер всегда отвечает `has_more: true`.
+    private static let groupDirectoryMaxPages = 60
+
+    /// Одна страница справочника групп из нового API.
+    ///
+    /// `query` — серверный поиск по названию группы и специальности
+    /// (тот самый параметр `q`, который использует веб-версия).
+    func fetchGroupOptions(
+        query: String? = nil,
+        page: Int = 1,
+        limit: Int = 50
+    ) async throws -> GroupOptionsPage {
+        var queryItems = [
+            URLQueryItem(name: "page", value: String(max(1, page))),
+            URLQueryItem(name: "limit", value: String(max(1, limit)))
+        ]
+
+        if let query = query?.trimmingCharacters(in: .whitespacesAndNewlines), !query.isEmpty {
+            queryItems.append(URLQueryItem(name: "q", value: query))
         }
-        
+
+        let response: APIEnvelope<GroupOptionsPageDTO> = try await request(
+            baseURL: primaryBaseURL,
+            path: "/api/v1/timetable/groups/options",
+            queryItems: queryItems
+        )
+
+        return response.data.makePage(requestedPage: max(1, page), requestedLimit: max(1, limit))
+    }
+
+    /// Полный справочник групп вуза (все страницы `/groups/options`).
+    ///
+    /// Эндпоинт не умеет фильтровать по институту, поэтому выгружаем справочник
+    /// целиком и фильтруем на клиенте — заодно получаем мгновенный локальный поиск.
+    /// Результат держим в памяти: смена института не должна тянуть его заново.
+    func fetchGroupDirectory(forceRefresh: Bool = false) async throws -> [Group] {
+        if !forceRefresh, let cached = cachedGroupDirectory, !cached.isEmpty {
+            return cached
+        }
+
+        var collected: [Group] = []
+        var seenIds = Set<String>()
+        var page = 1
+
+        while page <= Self.groupDirectoryMaxPages {
+            let result = try await fetchGroupOptions(page: page, limit: Self.groupDirectoryPageSize)
+
+            for group in result.groups where !seenIds.contains(group.id) {
+                seenIds.insert(group.id)
+                collected.append(group)
+            }
+
+            guard result.hasMore, !result.groups.isEmpty else { break }
+            page += 1
+        }
+
+        let directory = collected.sorted { $0.name.localizedCompare($1.name) == .orderedAscending }
+        cachedGroupDirectory = directory
+        return directory
+    }
+
+    /// Список групп факультета/института.
+    ///
+    /// Группы вуза живут в новом справочнике `/groups/options`, техникумы
+    /// ассоциации остались на старом `/groups/by-faculty`. Поэтому сначала
+    /// пробуем новый путь, а если по факультету там пусто — идём в старый.
+    func fetchGroups(for facultyId: String) async throws -> [Group] {
+        let directory: [Group]
+        do {
+            directory = try await fetchGroupDirectory()
+        } catch {
+            // Новый справочник недоступен — вся надежда на старый эндпоинт.
+            return try await fetchLegacyGroups(for: facultyId)
+        }
+
+        let matching = directory.filter { $0.facultyId == facultyId }
+        if !matching.isEmpty {
+            return matching
+        }
+
+        return try await fetchLegacyGroups(for: facultyId)
+    }
+
+    /// Старый эндпоинт групп по факультету (техникумы ассоциации).
+    func fetchLegacyGroups(for facultyId: String) async throws -> [Group] {
+        struct GroupDTO: Decodable {
+            let id: String?
+            let name: String?
+            let field: String?
+
+            init(from decoder: Decoder) throws {
+                let container = try decoder.container(keyedBy: CodingKeys.self)
+                id = container.decodeLooseString(forKey: .id)
+                name = container.decodeLooseString(forKey: .name)
+                field = container.decodeLooseString(forKey: .field)
+            }
+
+            enum CodingKeys: String, CodingKey { case id, name, field }
+        }
+
         let response: APIEnvelope<[GroupDTO]> = try await request(
             baseURL: primaryBaseURL,
             path: "/api/v1/timetable/groups/by-faculty",
@@ -162,79 +259,61 @@ class DVGUPSAPIClient: ObservableObject {
                 URLQueryItem(name: "facultyId", value: facultyId)
             ]
         )
-        
+
         return response.data
-            .map { Group(id: $0.id, name: $0.name, fullName: $0.field, facultyId: facultyId) }
-            .sorted { $0.name < $1.name }
+            .compactMap { dto -> Group? in
+                let id = (dto.id ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+                let name = (dto.name ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+                guard !id.isEmpty, !name.isEmpty else { return nil }
+                return Group(
+                    id: id,
+                    name: name,
+                    fullName: (dto.field ?? "").trimmingCharacters(in: .whitespacesAndNewlines),
+                    facultyId: facultyId
+                )
+            }
+            .sorted { $0.name.localizedCompare($1.name) == .orderedAscending }
     }
-    
-    /// Получает расписание для конкретной группы
-    func fetchSchedule(for groupId: String, startDate: Date = Date(), endDate: Date? = nil) async throws -> Schedule {
+
+    /// Календарь учебных недель (`/api/v1/timetable/weeks`).
+    ///
+    /// Новый API нумерует недели сам — веб-версия строит навигацию по нему,
+    /// а не по календарным неделям.
+    func fetchWeeks() async throws -> [ScheduleWeek] {
+        let response: APIEnvelope<[ScheduleWeekDTO]> = try await request(
+            baseURL: primaryBaseURL,
+            path: "/api/v1/timetable/weeks",
+            queryItems: []
+        )
+
+        return response.data
+            .enumerated()
+            .compactMap { index, dto in dto.makeWeek(fallbackId: index + 1) }
+            .sorted { $0.startDate < $1.startDate }
+    }
+
+
+    /// Получает расписание для конкретной группы.
+    ///
+    /// Эндпоинт общий для нового и старого формата, различается только payload:
+    /// новый добавляет `day_layout_id`, `calendar_id`, `begins_at`/`ends_at`
+    /// и подробности по группам. Разбор (см. `ScheduleItemDTO`) переваривает оба.
+    ///
+    /// - Parameters:
+    ///   - groupName: известное имя группы. Если не передано — берём его из
+    ///     `student_list`, но там перечислены все группы потока, поэтому
+    ///     имя может оказаться чужим.
+    ///   - weekNumber: номер учебной недели из `/timetable/weeks`, если он известен.
+    func fetchSchedule(
+        for groupId: String,
+        startDate: Date = Date(),
+        endDate: Date? = nil,
+        groupName: String? = nil,
+        weekNumber: Int? = nil
+    ) async throws -> Schedule {
         let daysCount = Self.computeDaysCount(startDate: startDate, endDate: endDate)
         let startDateString = DateFormatter.serverDateFormatter.string(from: startDate)
-        
-        struct ScheduleItemDTO: Decodable {
-            let startTime: String
-            let endTime: String
-            let date: String
-            let lessonData: LessonDataDTO
-            
-            struct LessonDataDTO: Decodable {
-                let courseType: CourseTypeDTO
-                let courseSubject: CourseSubjectDTO
-                let teacherList: [TeacherDTO]
-                let studentList: [StudentDTO]
-                let studyPlace: StudyPlaceDTO?
-                
-                struct CourseTypeDTO: Decodable { let name: String; let nameAbbr: String?
-                    enum CodingKeys: String, CodingKey { case name; case nameAbbr = "name_abbr" }
-                }
-                struct CourseSubjectDTO: Decodable { let name: String; let nameAbbr: String?
-                    enum CodingKeys: String, CodingKey { case name; case nameAbbr = "name_abbr" }
-                }
-                struct TeacherDTO: Decodable { let name: String; let nameAbbr: String?
-                    enum CodingKeys: String, CodingKey { case name; case nameAbbr = "name_abbr" }
-                }
-                struct StudentDTO: Decodable {
-                    let name: String?
-                    let nameAbbr: String?
-                    let studentGroupName: String?
-                    let studentGroupNameAbbr: String?
-                    let facultyName: String?
-                    let facultyNameAbbr: String?
-                    
-                    enum CodingKeys: String, CodingKey {
-                        case name
-                        case nameAbbr = "name_abbr"
-                        case studentGroupName = "student_group_name"
-                        case studentGroupNameAbbr = "student_group_name_abbr"
-                        case facultyName = "faculty_name"
-                        case facultyNameAbbr = "faculty_name_abbr"
-                    }
-                }
-                struct StudyPlaceDTO: Decodable {
-                    let name: String
-                    let ownerName: String?
-                    enum CodingKeys: String, CodingKey { case name; case ownerName = "owner_name" }
-                }
-                
-                enum CodingKeys: String, CodingKey {
-                    case courseType = "course_type"
-                    case courseSubject = "course_subject"
-                    case teacherList = "teacher_list"
-                    case studentList = "student_list"
-                    case studyPlace = "study_place"
-                }
-            }
-            
-            enum CodingKeys: String, CodingKey {
-                case startTime = "start_time"
-                case endTime = "end_time"
-                case date
-                case lessonData = "lesson_data"
-            }
-        }
-        
+
         let response: APIEnvelope<[ScheduleItemDTO]> = try await request(
             baseURL: primaryBaseURL,
             path: "/api/v1/timetable/schedule",
@@ -245,75 +324,71 @@ class DVGUPSAPIClient: ObservableObject {
                 URLQueryItem(name: "startDate", value: startDateString)
             ]
         )
-        
+
         // Группируем по дате
         var lessonsByDate: [Date: [Lesson]] = [:]
-        var resolvedGroupName: String? = nil
-        
+        var groupNameHits: [String: Int] = [:]
+
         for item in response.data {
-            guard let lessonDate = DateFormatter.serverDateFormatter.date(from: item.date) else {
+            guard let lessonDate = item.lessonDate,
+                  let timeStartHHmm = item.startHHmm else {
                 continue
             }
-            
-            // Пытаемся вытащить имя группы из student_list
-            if resolvedGroupName == nil {
-                resolvedGroupName =
-                    item.lessonData.studentList.first?.studentGroupNameAbbr ??
-                    item.lessonData.studentList.first?.studentGroupName ??
-                    item.lessonData.studentList.first?.nameAbbr ??
-                    item.lessonData.studentList.first?.name
+
+            let lessonData = item.lessonData
+            let timeEndHHmm = item.endHHmm ?? timeStartHHmm
+
+            // Имя группы: считаем, какая встречается чаще всего — у потоковых пар
+            // в `student_list` перечислены сразу несколько групп.
+            let groups = (lessonData?.studentList ?? []).compactMap { $0.groupName }
+            for name in groups {
+                groupNameHits[name, default: 0] += 1
             }
-            
-            let timeStartHHmm = Self.hhmm(fromHHmmss: item.startTime)
-            let timeEndHHmm = Self.hhmm(fromHHmmss: item.endTime)
-            
-            let pairNumber = Self.pairNumber(forStartTime: timeStartHHmm)
-            
-            let lessonType = LessonType(from: item.lessonData.courseType.name)
-            let subject = item.lessonData.courseSubject.name
-            
-            let room = Self.composeRoom(
-                name: item.lessonData.studyPlace?.name,
-                ownerName: item.lessonData.studyPlace?.ownerName
-            )
-            
-            let teacherName = item.lessonData.teacherList.first?.nameAbbr ?? item.lessonData.teacherList.first?.name
-            let teacher: Teacher? = (teacherName?.isEmpty == false) ? Teacher(name: teacherName!) : nil
-            
-            let groups = item.lessonData.studentList.compactMap { $0.studentGroupNameAbbr ?? $0.studentGroupName ?? $0.nameAbbr }
-                .filter { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
-            
+
+            let typeName = lessonData?.courseType?.name
+            let teachers = (lessonData?.teacherList ?? []).compactMap { dto -> Teacher? in
+                guard let name = dto.displayName else { return nil }
+                return Teacher(name: name, id: dto.id)
+            }
+
             let lesson = Lesson(
-                pairNumber: pairNumber,
+                // Точный номер пары проставим ниже, когда увидим весь день целиком.
+                pairNumber: ScheduleTimeFormat.bellPairNumber(forStartTime: timeStartHHmm) ?? 0,
                 timeStart: timeStartHHmm,
                 timeEnd: timeEndHHmm,
-                type: lessonType,
-                subject: subject,
-                room: room,
-                teacher: teacher,
+                type: LessonType(from: typeName ?? ""),
+                subject: lessonData?.courseSubject?.name ?? typeName ?? "Занятие",
+                room: Self.composeRoom(
+                    name: lessonData?.studyPlace?.name,
+                    ownerName: lessonData?.studyPlace?.ownerName
+                ),
+                teacher: teachers.first,
                 groups: groups,
-                onlineLink: nil
+                onlineLink: nil,
+                typeName: typeName,
+                subjectAbbr: lessonData?.courseSubject?.nameAbbr,
+                teachers: teachers.isEmpty ? nil : teachers
             )
-            
+
             lessonsByDate[lessonDate, default: []].append(lesson)
         }
-        
+
         let days: [ScheduleDay] = lessonsByDate
             .map { (date, lessons) in
                 let weekday = DateFormatter.weekdayRuFormatter.string(from: date).capitalized
                 return ScheduleDay(
                     date: date,
                     weekday: weekday,
-                    weekNumber: nil,
-                    isEvenWeek: nil,
-                    lessons: lessons.sorted { lhs, rhs in
-                        if lhs.pairNumber != rhs.pairNumber { return lhs.pairNumber < rhs.pairNumber }
-                        return lhs.timeStart < rhs.timeStart
-                    }
+                    weekNumber: weekNumber,
+                    isEvenWeek: weekNumber.map { $0 % 2 == 0 },
+                    lessons: Self.numberPairs(in: lessons)
                 )
             }
             .sorted { $0.date < $1.date }
-        
+
+        let resolvedGroupName = groupName?.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty
+            ?? groupNameHits.max(by: { $0.value < $1.value })?.key
+
         return Schedule(
             groupId: groupId,
             groupName: resolvedGroupName ?? "Группа \(groupId)",
@@ -322,7 +397,58 @@ class DVGUPSAPIClient: ObservableObject {
             days: days
         )
     }
-    
+
+    /// Сортирует пары дня по времени и проставляет номера.
+    ///
+    /// Сетка звонков вуза известна заранее, а у техникумов ассоциации она своя,
+    /// поэтому для непопавших в сетку пар нумеруем по порядку внутри дня —
+    /// раньше такие пары получали номер 0 и слипались при сортировке.
+    private static func numberPairs(in lessons: [Lesson]) -> [Lesson] {
+        let sorted = lessons.sorted { lhs, rhs in
+            let lhsMinutes = ScheduleTimeFormat.minutesSinceMidnight(lhs.timeStart)
+            let rhsMinutes = ScheduleTimeFormat.minutesSinceMidnight(rhs.timeStart)
+            if lhsMinutes != rhsMinutes { return lhsMinutes < rhsMinutes }
+            return lhs.subject.localizedCompare(rhs.subject) == .orderedAscending
+        }
+
+        // Пары в одно и то же время (подгруппы) должны получить один номер.
+        var numbers: [Int: Int] = [:] // минуты начала -> номер пары
+        var nextOrdinal = 0
+
+        return sorted.map { lesson in
+            let minutes = ScheduleTimeFormat.minutesSinceMidnight(lesson.timeStart)
+
+            let number: Int
+            if let known = numbers[minutes] {
+                number = known
+            } else {
+                nextOrdinal += 1
+                number = lesson.pairNumber > 0 ? lesson.pairNumber : nextOrdinal
+                numbers[minutes] = number
+            }
+            nextOrdinal = max(nextOrdinal, number)
+
+            guard number != lesson.pairNumber else { return lesson }
+
+            return Lesson(
+                pairNumber: number,
+                timeStart: lesson.timeStart,
+                timeEnd: lesson.timeEnd,
+                type: lesson.type,
+                subject: lesson.subject,
+                room: lesson.room,
+                teacher: lesson.teacher,
+                groups: lesson.groups,
+                onlineLink: lesson.onlineLink,
+                isEvenWeek: lesson.isEvenWeek,
+                typeName: lesson.typeName,
+                subjectAbbr: lesson.subjectAbbr,
+                teachers: lesson.teachers
+            )
+        }
+    }
+
+
     /// Старые методы (HTML) удалены: новый API работает только через REST.
     func fetchScheduleByAuditorium(date: Date = Date()) async throws -> [ScheduleDay] {
         throw APIError.parseError("Метод не поддерживается новым API")
@@ -561,51 +687,26 @@ class DVGUPSAPIClient: ObservableObject {
         return max(1, diff + 1)
     }
     
-    private static func hhmm(fromHHmmss value: String) -> String {
-        // "16:55:00" -> "16:55"
-        if value.count >= 5 {
-            return String(value.prefix(5))
-        }
-        return value
-    }
-    
-    private static func pairNumber(forStartTime hhmm: String) -> Int {
-        func parse(_ s: String) -> (Int, Int)? {
-            let parts = s.split(separator: ":")
-            guard parts.count >= 2,
-                  let h = Int(parts[0]),
-                  let m = Int(parts[1]) else { return nil }
-            return (h, m)
-        }
-        
-        guard let target = parse(hhmm) else { return 0 }
-        
-        for t in LessonTime.schedule {
-            if let start = parse(t.startTime), start == target {
-                return t.number
-            }
-        }
-        
-        // Фолбек: "08:05" vs "8:05" и наоборот
-        if hhmm.hasPrefix("0"), let alt = parse(String(hhmm.dropFirst())) {
-            for t in LessonTime.schedule {
-                if let start = parse(t.startTime), start == alt {
-                    return t.number
-                }
-            }
-        }
-        
-        return 0
-    }
-    
     private static func composeRoom(name: String?, ownerName: String?) -> String? {
-        guard let name else { return nil }
-        let trimmedName = name.trimmingCharacters(in: .whitespacesAndNewlines)
-        let owner = ownerName?.trimmingCharacters(in: .whitespacesAndNewlines)
-        if let owner, !owner.isEmpty {
+        // Новый API присылает аудиторию с двойными пробелами ("а.  418") — схлопываем.
+        guard let trimmedName = name?.collapsingWhitespace(), !trimmedName.isEmpty else { return nil }
+
+        if let owner = ownerName?.collapsingWhitespace(), !owner.isEmpty {
             return "\(trimmedName) • \(owner)"
         }
-        return trimmedName.isEmpty ? nil : trimmedName
+        return trimmedName
+    }
+}
+
+// MARK: - String helpers
+
+extension String {
+    /// `nil` вместо пустой строки — удобно в цепочках `??`.
+    var nilIfEmpty: String? { isEmpty ? nil : self }
+
+    /// Схлопывает повторяющиеся пробелы и обрезает края.
+    func collapsingWhitespace() -> String {
+        split(whereSeparator: { $0.isWhitespace }).joined(separator: " ")
     }
 }
 

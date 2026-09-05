@@ -72,14 +72,21 @@ enum LessonType: String, Codable, CaseIterable {
     case unknown = "Неизвестно"
     
     init(from rawValue: String) {
-        switch rawValue.lowercased() {
-        case "лекции":
+        // Новый API вуза и старый API техникумов пишут тип по-разному
+        // («Лекции» / «Лекция», «Лабораторные работы» / «Лаб. работа»),
+        // поэтому сравниваем по началу слова, а не по полному совпадению.
+        let normalized = rawValue
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased()
+            .replacingOccurrences(of: "ё", with: "е")
+
+        if normalized.hasPrefix("лекц") {
             self = .lecture
-        case "практика":
+        } else if normalized.hasPrefix("практ") || normalized.hasPrefix("семинар") {
             self = .practice
-        case "лабораторные работы":
+        } else if normalized.hasPrefix("лаб") {
             self = .laboratory
-        default:
+        } else {
             self = .unknown
         }
     }
@@ -89,10 +96,13 @@ enum LessonType: String, Codable, CaseIterable {
 struct Teacher: Codable {
     let name: String
     let email: String?
-    
-    init(name: String, email: String? = nil) {
+    /// ID преподавателя из нового API (`teacher_list[].id`), если он пришёл.
+    let id: String?
+
+    init(name: String, email: String? = nil, id: String? = nil) {
         self.name = name
         self.email = email
+        self.id = id
     }
 }
 
@@ -109,10 +119,18 @@ struct Lesson: Codable, Identifiable {
     let groups: [String] // Группы, которые присутствуют на занятии
     let onlineLink: String? // Ссылка на онлайн-занятие
     let isEvenWeek: Bool? // Четная/нечетная неделя (может быть не указано)
-    
-    init(pairNumber: Int, timeStart: String, timeEnd: String, type: LessonType, 
-         subject: String, room: String? = nil, teacher: Teacher? = nil, 
-         groups: [String] = [], onlineLink: String? = nil, isEvenWeek: Bool? = nil) {
+    /// Исходное название типа занятия с сервера («Лекции», «Экзамен», ...).
+    /// Нужно, чтобы не показывать «Неизвестно» для типов вне `LessonType`.
+    let typeName: String?
+    /// Сокращение предмета из нового API (`course_subject.name_abbr`, например «ТОЭ»).
+    let subjectAbbr: String?
+    /// Все преподаватели пары: в новом формате их бывает несколько.
+    let teachers: [Teacher]?
+
+    init(pairNumber: Int, timeStart: String, timeEnd: String, type: LessonType,
+         subject: String, room: String? = nil, teacher: Teacher? = nil,
+         groups: [String] = [], onlineLink: String? = nil, isEvenWeek: Bool? = nil,
+         typeName: String? = nil, subjectAbbr: String? = nil, teachers: [Teacher]? = nil) {
         self.pairNumber = pairNumber
         self.timeStart = timeStart
         self.timeEnd = timeEnd
@@ -123,21 +141,42 @@ struct Lesson: Codable, Identifiable {
         self.groups = groups
         self.onlineLink = onlineLink
         self.isEvenWeek = isEvenWeek
+        self.typeName = typeName
+        self.subjectAbbr = subjectAbbr
+        self.teachers = teachers
     }
-    
+
+    /// Название типа занятия для интерфейса: сначала то, что прислал сервер.
+    var typeTitle: String {
+        if let typeName = typeName?.trimmingCharacters(in: .whitespacesAndNewlines), !typeName.isEmpty {
+            return typeName
+        }
+        return type.rawValue
+    }
+
+    /// Имена всех преподавателей пары.
+    var teacherNames: [String] {
+        if let teachers, !teachers.isEmpty {
+            return teachers.map { $0.name }.filter { !$0.isEmpty }
+        }
+        if let name = teacher?.name, !name.isEmpty { return [name] }
+        return []
+    }
+
     /// Формирует текст для обмена
     var shareText: String {
         var text = "📅 Пара №\(pairNumber)\n"
         text += "🕰 Время: \(timeStart) - \(timeEnd)\n"
-        text += "📚 \(type.rawValue): \(subject)\n"
-        
+        text += "📚 \(typeTitle): \(subject)\n"
+
         if let room = room, !room.isEmpty {
             text += "📍 Аудитория: \(room)\n"
         }
-        
-        if let teacher = teacher, !teacher.name.isEmpty {
-            text += "👨‍🏫 Преподаватель: \(teacher.name)\n"
-            if let email = teacher.email, !email.isEmpty {
+
+        let names = teacherNames
+        if !names.isEmpty {
+            text += "👨‍🏫 Преподаватель: \(names.joined(separator: ", "))\n"
+            if let email = teacher?.email, !email.isEmpty {
                 text += "✉️ Email: \(email)\n"
             }
         }

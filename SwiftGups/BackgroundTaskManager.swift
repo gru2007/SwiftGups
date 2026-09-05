@@ -137,7 +137,8 @@ final class BackgroundTaskManager {
             }.fetchSchedule(
                 for: groupId,
                 startDate: now,
-                endDate: endDate
+                endDate: endDate,
+                groupName: groupName
             )
             
             // Обновляем Live Activity (метод сам выполнится на MainActor)
