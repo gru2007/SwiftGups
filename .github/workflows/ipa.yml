@@ -5,7 +5,9 @@ name: IPA
 
 on:
   push:
-    branches: ["main"]
+    # Ветки claude/** собираются автоматически: их .ipa нужен, чтобы
+    # проверить изменения на устройстве до слияния.
+    branches: ["main", "claude/**"]
     tags: ["v*"]
   pull_request:
     branches: ["main"]

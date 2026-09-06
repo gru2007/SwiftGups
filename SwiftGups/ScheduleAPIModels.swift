@@ -56,17 +56,36 @@ struct ScheduleWeekDTO: Decodable {
 
     init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
+
+        // Сервер переехал на snake_case (`start_date`, `is_current`);
+        // camelCase оставлен как запасной вариант.
+        func string(_ keys: CodingKeys...) -> String? {
+            for key in keys {
+                if let value = container.decodeLooseString(forKey: key) { return value }
+            }
+            return nil
+        }
+
         id = container.decodeLooseInt(forKey: .id)
-        name = container.decodeLooseString(forKey: .name)
-        startDate = container.decodeLooseString(forKey: .startDate)
-        endDate = container.decodeLooseString(forKey: .endDate)
-        startDateObj = container.decodeLooseString(forKey: .startDateObj)
-        endDateObj = container.decodeLooseString(forKey: .endDateObj)
-        isCurrent = try? container.decodeIfPresent(Bool.self, forKey: .isCurrent)
+        name = string(.name)
+        startDate = string(.startDateSnake, .startDate)
+        endDate = string(.endDateSnake, .endDate)
+        startDateObj = string(.startDateObjSnake, .startDateObj)
+        endDateObj = string(.endDateObjSnake, .endDateObj)
+
+        isCurrent = (try? container.decodeIfPresent(Bool.self, forKey: .isCurrentSnake))
+            ?? (try? container.decodeIfPresent(Bool.self, forKey: .isCurrent))
+            ?? nil
     }
 
     private enum CodingKeys: String, CodingKey {
-        case id, name, startDate, endDate, startDateObj, endDateObj, isCurrent
+        case id, name
+        case startDate, endDate, startDateObj, endDateObj, isCurrent
+        case startDateSnake = "start_date"
+        case endDateSnake = "end_date"
+        case startDateObjSnake = "start_date_obj"
+        case endDateObjSnake = "end_date_obj"
+        case isCurrentSnake = "is_current"
     }
 
     /// Собирает доменную модель. Возвращает nil, если даты нечитаемы.

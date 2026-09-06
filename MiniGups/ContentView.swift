@@ -1703,6 +1703,8 @@ enum APIError: Error, LocalizedError {
     case parseError(String)
     case networkError(Error)
     case invalidResponse
+    /// Код вне 2xx: без кода и пути «неверный формат ответа» ничего не объясняет.
+    case unexpectedStatus(code: Int, path: String)
     case vpnOrBlockedNetwork
     case requestTimedOut(seconds: Int)
     case emptyResponse
@@ -1717,6 +1719,8 @@ enum APIError: Error, LocalizedError {
             return "Ошибка сети: \(error.localizedDescription)"
         case .invalidResponse:
             return "Неверный формат ответа сервера"
+        case .unexpectedStatus(let code, let path):
+            return "Сервер ответил \(code) на \(path)"
         case .vpnOrBlockedNetwork:
             return "Не удалось подключиться к серверу. Возможно включен VPN или сеть блокирует доступ к dvgups.ru. Отключите VPN и повторите попытку."
         case .requestTimedOut(let seconds):
@@ -1737,6 +1741,8 @@ final class DVGUPSAPIClient: ObservableObject {
     private let requestTimeoutSeconds: TimeInterval = 8
     /// Справочник групп нового API — выгружается постранично, поэтому кэшируем на время сессии.
     private var cachedGroupDirectory: [Group]?
+    /// Сервер режет запросы без браузерного User-Agent (403 + HTML).
+    fileprivate static let userAgent = "Mozilla/5.0 (iPhone; CPU iPhone OS 18_7 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/26.1 Mobile/15E148 Safari/604.1"
 
     init(session: URLSession = .shared) {
         self.session = session
@@ -1748,7 +1754,12 @@ final class DVGUPSAPIClient: ObservableObject {
     }
 
     func fetchFaculties() async throws -> FacultiesResult {
-        let response: APIEnvelope<[[String?]]> = try await request(
+        struct FacultyDTO: Decodable {
+            let id: String?
+            let name: String?
+        }
+
+        let response: APIListEnvelope<FacultyDTO> = try await request(
             baseURL: primaryBaseURL,
             path: "/api/v1/timetable/faculties",
             queryItems: []
@@ -1756,15 +1767,14 @@ final class DVGUPSAPIClient: ObservableObject {
 
         var faculties: [Faculty] = []
         var missingIdNames: [String] = []
-        for row in response.data {
-            let rawId = row.count > 0 ? row[0] : nil
-            let name = row.count > 1 ? row[1] : nil
 
-            guard let facultyName = name?.trimmingCharacters(in: .whitespacesAndNewlines),
-                  !facultyName.isEmpty else { continue }
+        for dto in response.items {
+            let facultyName = (dto.name ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+            // «<НЕТ>» — служебная запись справочника.
+            guard !facultyName.isEmpty, !facultyName.hasPrefix("<") else { continue }
 
-            guard let id = rawId?.trimmingCharacters(in: .whitespacesAndNewlines),
-                  !id.isEmpty else {
+            let id = (dto.id ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !id.isEmpty else {
                 missingIdNames.append(facultyName)
                 continue
             }
@@ -1825,7 +1835,8 @@ final class DVGUPSAPIClient: ObservableObject {
             }
         }
 
-        let pageSize = 200
+        // Больше 100 сервер не отдаёт: «limit must not be greater than 100».
+        let pageSize = 100
         var collected: [Group] = []
         var seenIds = Set<String>()
         var page = 1
@@ -1916,13 +1927,27 @@ final class DVGUPSAPIClient: ObservableObject {
             let field: String
         }
 
-        let response: APIEnvelope<[GroupDTO]> = try await request(
-            baseURL: primaryBaseURL,
-            path: "/api/v1/timetable/groups/by-faculty",
-            queryItems: [URLQueryItem(name: "facultyId", value: facultyId)]
-        )
+        // Сервер переименовал параметр в faculty_id.
+        var response: APIListEnvelope<GroupDTO>?
+        var lastError: Error?
 
-        return response.data
+        for name in ["faculty_id", "facultyId"] {
+            do {
+                response = try await request(
+                    baseURL: primaryBaseURL,
+                    path: "/api/v1/timetable/groups/by-faculty",
+                    queryItems: [URLQueryItem(name: name, value: facultyId)]
+                )
+                break
+            } catch let error as APIError {
+                guard case .unexpectedStatus(let code, _) = error, code == 400 else { throw error }
+                lastError = error
+            }
+        }
+
+        guard let response else { throw lastError ?? APIError.invalidResponse }
+
+        return response.items
             .map { Group(id: $0.id, name: $0.name, fullName: $0.field, facultyId: facultyId) }
             .sorted { $0.name.localizedCompare($1.name) == .orderedAscending }
     }
@@ -2037,21 +2062,36 @@ final class DVGUPSAPIClient: ObservableObject {
             }
         }
 
-        let response: APIEnvelope<[ScheduleItemDTO]> = try await request(
-            baseURL: primaryBaseURL,
-            path: "/api/v1/timetable/schedule",
-            queryItems: [
-                URLQueryItem(name: "scheduleType", value: "gr"),
-                URLQueryItem(name: "parameter", value: groupId),
-                URLQueryItem(name: "days", value: String(daysCount)),
-                URLQueryItem(name: "startDate", value: startDateString)
-            ]
-        )
+        // Сервер переехал с camelCase на snake_case и на старые имена отвечает
+        // 400 «schedule_type must be one of...». Пробуем оба варианта.
+        var response: APIListEnvelope<ScheduleItemDTO>?
+        var lastError: Error?
+
+        for names in [("schedule_type", "start_date"), ("scheduleType", "startDate")] {
+            do {
+                response = try await request(
+                    baseURL: primaryBaseURL,
+                    path: "/api/v1/timetable/schedule",
+                    queryItems: [
+                        URLQueryItem(name: names.0, value: "gr"),
+                        URLQueryItem(name: "parameter", value: groupId),
+                        URLQueryItem(name: "days", value: String(daysCount)),
+                        URLQueryItem(name: names.1, value: startDateString)
+                    ]
+                )
+                break
+            } catch let error as APIError {
+                guard case .unexpectedStatus(let code, _) = error, code == 400 else { throw error }
+                lastError = error
+            }
+        }
+
+        guard let response else { throw lastError ?? APIError.invalidResponse }
 
         var lessonsByDate: [Date: [Lesson]] = [:]
         var groupNameHits: [String: Int] = [:]
 
-        for item in response.data {
+        for item in response.items {
             guard let lessonDate = item.lessonDate,
                   let timeStartHHmm = item.startHHmm else {
                 continue
@@ -2119,6 +2159,27 @@ final class DVGUPSAPIClient: ObservableObject {
         let data: T
     }
 
+    /// Списки приходят двумя способами: старый `{"data":[ ... ]}`
+    /// и новый `{"success":true,"data":{"items":[ ... ]}}`.
+    private struct APIListEnvelope<Element: Decodable>: Decodable {
+        let items: [Element]
+
+        private enum CodingKeys: String, CodingKey { case data }
+        private enum DataKeys: String, CodingKey { case items }
+
+        init(from decoder: Decoder) throws {
+            let container = try decoder.container(keyedBy: CodingKeys.self)
+
+            if let nested = try? container.nestedContainer(keyedBy: DataKeys.self, forKey: .data),
+               let items = try? nested.decode([Element].self, forKey: .items) {
+                self.items = items
+                return
+            }
+
+            items = try container.decode([Element].self, forKey: .data)
+        }
+    }
+
     private func request<T: Decodable>(
         baseURL: URL,
         path: String,
@@ -2147,17 +2208,18 @@ final class DVGUPSAPIClient: ObservableObject {
         var request = URLRequest(url: url)
         request.httpMethod = "GET"
         request.setValue("application/json", forHTTPHeaderField: "Accept")
+        // Без браузерного User-Agent сервер отдаёт 403 и HTML-страницу вместо JSON.
+        request.setValue(Self.userAgent, forHTTPHeaderField: "User-Agent")
+        request.setValue("ru-RU,ru;q=0.9", forHTTPHeaderField: "Accept-Language")
+        request.setValue("https://dvgups.ru/public/schedule/group", forHTTPHeaderField: "Referer")
         request.timeoutInterval = requestTimeoutSeconds
 
         do {
             let (data, response) = try await session.data(for: request)
             guard let http = response as? HTTPURLResponse else { throw APIError.invalidResponse }
 
-            if (500...599).contains(http.statusCode), baseURL == primaryBaseURL {
-                throw APIError.invalidResponse
-            }
             guard (200...299).contains(http.statusCode) else {
-                throw APIError.invalidResponse
+                throw APIError.unexpectedStatus(code: http.statusCode, path: path)
             }
             
             if let text = String(data: data, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines),

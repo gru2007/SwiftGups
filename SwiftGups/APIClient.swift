@@ -7,6 +7,10 @@ enum APIError: Error, LocalizedError {
     case parseError(String)
     case networkError(Error)
     case invalidResponse
+    /// Сервер ответил кодом вне 2xx. Код и путь нужны в тексте ошибки:
+    /// без них «неверный формат ответа» ничего не говорит ни пользователю,
+    /// ни тому, кто будет разбираться по скриншоту.
+    case unexpectedStatus(code: Int, path: String)
     case authenticationRequired
     case invalidCredentials
     case groupNotFound
@@ -27,6 +31,8 @@ enum APIError: Error, LocalizedError {
             return "Ошибка сети: \(error.localizedDescription)"
         case .invalidResponse:
             return "Неверный формат ответа сервера"
+        case .unexpectedStatus(let code, let path):
+            return "Сервер ответил \(code) на \(path)"
         case .authenticationRequired:
             return "Для доступа к расписанию нужен вход в ЛК ДВГУПС. Откройте вкладку «Профиль» и добавьте логин и пароль."
         case .invalidCredentials:
@@ -88,69 +94,71 @@ class DVGUPSAPIClient: ObservableObject {
     
     /// Получает список институтов/факультетов (динамически)
     func fetchFaculties() async throws -> FacultiesResult {
-        // ВУЗ иногда меняет формат отдачи: встречались как "табличка" [[id, name]],
-        // так и нормальный массив объектов. Декодим в 2 прохода.
+        // ВУЗ менял формат отдачи не раз: встречались и «табличка» [[id, name]],
+        // и массив объектов, и (сейчас) объект с `items`. Конверт разворачивает
+        // список, а элементы декодим в два прохода.
         let data = try await requestData(
             baseURL: primaryBaseURL,
             path: "/api/v1/timetable/faculties",
             queryItems: []
         )
-        
+
         var faculties: [Faculty] = []
         var missingIdNames: [String] = []
-        
-        // Формат 1: data = [[id?, name?], ...]
-        if let envelope = try? JSONDecoder().decode(APIEnvelope<[[String?]]>.self, from: data) {
-            for row in envelope.data {
-                let rawId = row.count > 0 ? row[0] : nil
-                let name = row.count > 1 ? row[1] : nil
-                
-                guard let facultyName = name?.trimmingCharacters(in: .whitespacesAndNewlines),
-                      !facultyName.isEmpty else { continue }
-                
-                guard let id = rawId?.trimmingCharacters(in: .whitespacesAndNewlines),
-                      !id.isEmpty else {
-                    // По ТЗ: не подставляем id из старого списка. Просто сообщаем в UI.
-                    missingIdNames.append(facultyName)
-                    continue
-                }
-                
-                faculties.append(Faculty(id: id, name: facultyName))
+
+        func add(id rawId: String?, name rawName: String?) {
+            let name = (rawName ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+            // «<НЕТ>» — служебная запись, показывать её пользователю незачем.
+            guard !name.isEmpty, !name.hasPrefix("<") else { return }
+
+            let id = (rawId ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !id.isEmpty else {
+                missingIdNames.append(name)
+                return
+            }
+
+            faculties.append(Faculty(id: id, name: name))
+        }
+
+        struct FacultyDTO: Decodable {
+            let id: String?
+            let name: String?
+
+            init(from decoder: Decoder) throws {
+                let container = try decoder.container(keyedBy: CodingKeys.self)
+                id = container.decodeLooseString(forKey: .id)
+                name = container.decodeLooseString(forKey: .name)
+            }
+
+            enum CodingKeys: String, CodingKey { case id, name }
+        }
+
+        if let envelope = try? JSONDecoder().decode(APIListEnvelope<FacultyDTO>.self, from: data),
+           !envelope.items.isEmpty {
+            for dto in envelope.items {
+                add(id: dto.id, name: dto.name)
             }
         } else {
-            // Формат 2: data = [{ id, name }, ...] (оборачивается в status/data)
-            struct FacultyDTO: Decodable {
-                let id: String?
-                let name: String?
-            }
-            let envelope = try JSONDecoder().decode(APIEnvelope<[FacultyDTO]>.self, from: data)
-            for dto in envelope.data {
-                let facultyName = (dto.name ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
-                guard !facultyName.isEmpty else { continue }
-                
-                let id = (dto.id ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
-                guard !id.isEmpty else {
-                    missingIdNames.append(facultyName)
-                    continue
-                }
-                
-                faculties.append(Faculty(id: id, name: facultyName))
+            // Формат-«табличка»: data = [[id?, name?], ...]
+            let envelope = try JSONDecoder().decode(APIListEnvelope<[String?]>.self, from: data)
+            for row in envelope.items {
+                add(id: row.count > 0 ? row[0] : nil, name: row.count > 1 ? row[1] : nil)
             }
         }
-        
+
         // Убираем дубликаты по id, сортируем по названию
         let unique = Dictionary(grouping: faculties, by: { $0.id })
             .compactMap { $0.value.first }
-            .sorted { $0.name < $1.name }
-        
+            .sorted { $0.name.localizedCompare($1.name) == .orderedAscending }
+
         return FacultiesResult(
             faculties: unique,
             missingIdNames: Array(Set(missingIdNames)).sorted()
         )
     }
     
-    /// Размер страницы при полной выгрузке справочника групп.
-    private static let groupDirectoryPageSize = 200
+    /// Больше 100 сервер не отдаёт: «limit must not be greater than 100».
+    private static let groupDirectoryPageSize = 100
     /// Максимум страниц: страховка от бесконечного цикла,
     /// если сервер всегда отвечает `has_more: true`.
     private static let groupDirectoryMaxPages = 60
@@ -301,15 +309,28 @@ class DVGUPSAPIClient: ObservableObject {
             enum CodingKeys: String, CodingKey { case id, name, field }
         }
 
-        let response: APIEnvelope<[GroupDTO]> = try await request(
-            baseURL: primaryBaseURL,
-            path: "/api/v1/timetable/groups/by-faculty",
-            queryItems: [
-                URLQueryItem(name: "facultyId", value: facultyId)
-            ]
-        )
+        // Сервер переименовал параметр в faculty_id и на старое имя отвечает
+        // 400 «faculty_id must be a string». Пробуем оба варианта.
+        var response: APIListEnvelope<GroupDTO>?
+        var lastError: Error?
 
-        return response.data
+        for name in ["faculty_id", "facultyId"] {
+            do {
+                response = try await request(
+                    baseURL: primaryBaseURL,
+                    path: "/api/v1/timetable/groups/by-faculty",
+                    queryItems: [URLQueryItem(name: name, value: facultyId)]
+                )
+                break
+            } catch let error as APIError {
+                guard case .unexpectedStatus(let code, _) = error, code == 400 else { throw error }
+                lastError = error
+            }
+        }
+
+        guard let response else { throw lastError ?? APIError.invalidResponse }
+
+        return response.items
             .compactMap { dto -> Group? in
                 let id = (dto.id ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
                 let name = (dto.name ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
@@ -329,13 +350,13 @@ class DVGUPSAPIClient: ObservableObject {
     /// Новый API нумерует недели сам — веб-версия строит навигацию по нему,
     /// а не по календарным неделям.
     func fetchWeeks() async throws -> [ScheduleWeek] {
-        let response: APIEnvelope<[ScheduleWeekDTO]> = try await request(
+        let response: APIListEnvelope<ScheduleWeekDTO> = try await request(
             baseURL: primaryBaseURL,
             path: "/api/v1/timetable/weeks",
             queryItems: []
         )
 
-        return response.data
+        return response.items
             .enumerated()
             .compactMap { index, dto in dto.makeWeek(fallbackId: index + 1) }
             .sorted { $0.startDate < $1.startDate }
@@ -363,22 +384,17 @@ class DVGUPSAPIClient: ObservableObject {
         let daysCount = Self.computeDaysCount(startDate: startDate, endDate: endDate)
         let startDateString = DateFormatter.serverDateFormatter.string(from: startDate)
 
-        let response: APIEnvelope<[ScheduleItemDTO]> = try await request(
-            baseURL: primaryBaseURL,
-            path: "/api/v1/timetable/schedule",
-            queryItems: [
-                URLQueryItem(name: "scheduleType", value: "gr"),
-                URLQueryItem(name: "parameter", value: groupId),
-                URLQueryItem(name: "days", value: String(daysCount)),
-                URLQueryItem(name: "startDate", value: startDateString)
-            ]
+        let response: APIListEnvelope<ScheduleItemDTO> = try await requestSchedule(
+            groupId: groupId,
+            daysCount: daysCount,
+            startDateString: startDateString
         )
 
         // Группируем по дате
         var lessonsByDate: [Date: [Lesson]] = [:]
         var groupNameHits: [String: Int] = [:]
 
-        for item in response.data {
+        for item in response.items {
             guard let lessonDate = item.lessonDate,
                   let timeStartHHmm = item.startHHmm else {
                 continue
@@ -447,6 +463,62 @@ class DVGUPSAPIClient: ObservableObject {
         )
     }
 
+    /// Имена query-параметров расписания.
+    ///
+    /// Сервер переехал с camelCase на snake_case и на старые имена отвечает
+    /// 400 «schedule_type must be one of...». Держим оба варианта: сначала
+    /// текущий, при 400 — прежний, чтобы приложение пережило и обратный
+    /// переезд, и разные версии API у вуза и техникумов.
+    private enum ScheduleParameterNaming: CaseIterable {
+        case snakeCase
+        case camelCase
+
+        var scheduleType: String {
+            switch self {
+            case .snakeCase: return "schedule_type"
+            case .camelCase: return "scheduleType"
+            }
+        }
+
+        var startDate: String {
+            switch self {
+            case .snakeCase: return "start_date"
+            case .camelCase: return "startDate"
+            }
+        }
+    }
+
+    private func requestSchedule(
+        groupId: String,
+        daysCount: Int,
+        startDateString: String
+    ) async throws -> APIListEnvelope<ScheduleItemDTO> {
+        var lastError: Error?
+
+        for naming in ScheduleParameterNaming.allCases {
+            do {
+                return try await request(
+                    baseURL: primaryBaseURL,
+                    path: "/api/v1/timetable/schedule",
+                    queryItems: [
+                        URLQueryItem(name: naming.scheduleType, value: "gr"),
+                        URLQueryItem(name: "parameter", value: groupId),
+                        URLQueryItem(name: "days", value: String(daysCount)),
+                        URLQueryItem(name: naming.startDate, value: startDateString)
+                    ]
+                )
+            } catch let error as APIError {
+                // 400 — сервер не понял имена параметров, есть смысл пробовать
+                // другой вариант. Всё остальное повторять бессмысленно.
+                guard case .unexpectedStatus(let code, _) = error, code == 400 else { throw error }
+                print("⚠️ Расписание: сервер не принял параметры \(naming), пробуем другой вариант")
+                lastError = error
+            }
+        }
+
+        throw lastError ?? APIError.invalidResponse
+    }
+
     /// Сортирует пары дня по времени и проставляет номера.
     ///
     /// Сетка звонков вуза известна заранее, а у техникумов ассоциации она своя,
@@ -512,6 +584,31 @@ class DVGUPSAPIClient: ObservableObject {
     private struct APIEnvelope<T: Decodable>: Decodable {
         let status: String?
         let data: T
+    }
+
+    /// Конверт ответа со списком.
+    ///
+    /// Сервер отдаёт списки двумя способами:
+    ///   старый — `{"status":"success","data":[ ... ]}`
+    ///   новый  — `{"success":true,"data":{"items":[ ... ]}}`
+    /// Разворачиваем оба, чтобы вызывающий код всегда получал массив.
+    private struct APIListEnvelope<Element: Decodable>: Decodable {
+        let items: [Element]
+
+        private enum CodingKeys: String, CodingKey { case data }
+        private enum DataKeys: String, CodingKey { case items }
+
+        init(from decoder: Decoder) throws {
+            let container = try decoder.container(keyedBy: CodingKeys.self)
+
+            if let nested = try? container.nestedContainer(keyedBy: DataKeys.self, forKey: .data),
+               let items = try? nested.decode([Element].self, forKey: .items) {
+                self.items = items
+                return
+            }
+
+            items = try container.decode([Element].self, forKey: .data)
+        }
     }
     
     private func requestData(
@@ -580,13 +677,8 @@ class DVGUPSAPIClient: ObservableObject {
         do {
             let (data, httpResponse) = try await performRequestHandlingAuthorization(request)
             
-            // Если запасной домен отвечает 5xx — пробуем fallback/ошибку отдать наверх через общий retry.
-            if (500...599).contains(httpResponse.statusCode), baseURL == primaryBaseURL {
-                throw APIError.invalidResponse
-            }
-            
             guard (200...299).contains(httpResponse.statusCode) else {
-                throw APIError.invalidResponse
+                throw APIError.unexpectedStatus(code: httpResponse.statusCode, path: path)
             }
             
             if let text = String(data: data, encoding: .utf8)?
@@ -658,7 +750,9 @@ class DVGUPSAPIClient: ObservableObject {
     private func applyDefaultHeaders(to request: inout URLRequest, baseURL: URL, path: String) {
         request.setValue(DVGUPSBrowserProfile.userAgent, forHTTPHeaderField: "User-Agent")
         request.setValue(DVGUPSBrowserProfile.acceptLanguage, forHTTPHeaderField: "Accept-Language")
-        request.setValue("keep-alive", forHTTPHeaderField: "Connection")
+        // `Connection` намеренно не ставим: в HTTP/2 этот заголовок запрещён
+        // (RFC 9113, 8.2.2), веб-версия его не шлёт, а соединениями и так
+        // управляет URLSession.
 
         guard baseURL.host == primaryBaseURL.host, path.hasPrefix("/api/v1/") else {
             request.setValue("application/json", forHTTPHeaderField: "Accept")
@@ -708,6 +802,9 @@ class DVGUPSAPIClient: ObservableObject {
                 return true
             case .invalidResponse:
                 return true
+            case .unexpectedStatus(let code, _):
+                // Повторяем только серверные сбои: 404 и 400 от повтора не исправятся.
+                return (500...599).contains(code)
             default:
                 return false
             }
