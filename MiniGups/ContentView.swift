@@ -1754,7 +1754,12 @@ final class DVGUPSAPIClient: ObservableObject {
     }
 
     func fetchFaculties() async throws -> FacultiesResult {
-        let response: APIEnvelope<[[String?]]> = try await request(
+        struct FacultyDTO: Decodable {
+            let id: String?
+            let name: String?
+        }
+
+        let response: APIListEnvelope<FacultyDTO> = try await request(
             baseURL: primaryBaseURL,
             path: "/api/v1/timetable/faculties",
             queryItems: []
@@ -1762,15 +1767,14 @@ final class DVGUPSAPIClient: ObservableObject {
 
         var faculties: [Faculty] = []
         var missingIdNames: [String] = []
-        for row in response.data {
-            let rawId = row.count > 0 ? row[0] : nil
-            let name = row.count > 1 ? row[1] : nil
 
-            guard let facultyName = name?.trimmingCharacters(in: .whitespacesAndNewlines),
-                  !facultyName.isEmpty else { continue }
+        for dto in response.items {
+            let facultyName = (dto.name ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+            // «<НЕТ>» — служебная запись справочника.
+            guard !facultyName.isEmpty, !facultyName.hasPrefix("<") else { continue }
 
-            guard let id = rawId?.trimmingCharacters(in: .whitespacesAndNewlines),
-                  !id.isEmpty else {
+            let id = (dto.id ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !id.isEmpty else {
                 missingIdNames.append(facultyName)
                 continue
             }
@@ -1831,7 +1835,8 @@ final class DVGUPSAPIClient: ObservableObject {
             }
         }
 
-        let pageSize = 200
+        // Больше 100 сервер не отдаёт: «limit must not be greater than 100».
+        let pageSize = 100
         var collected: [Group] = []
         var seenIds = Set<String>()
         var page = 1
@@ -1922,13 +1927,27 @@ final class DVGUPSAPIClient: ObservableObject {
             let field: String
         }
 
-        let response: APIEnvelope<[GroupDTO]> = try await request(
-            baseURL: primaryBaseURL,
-            path: "/api/v1/timetable/groups/by-faculty",
-            queryItems: [URLQueryItem(name: "facultyId", value: facultyId)]
-        )
+        // Сервер переименовал параметр в faculty_id.
+        var response: APIListEnvelope<GroupDTO>?
+        var lastError: Error?
 
-        return response.data
+        for name in ["faculty_id", "facultyId"] {
+            do {
+                response = try await request(
+                    baseURL: primaryBaseURL,
+                    path: "/api/v1/timetable/groups/by-faculty",
+                    queryItems: [URLQueryItem(name: name, value: facultyId)]
+                )
+                break
+            } catch let error as APIError {
+                guard case .unexpectedStatus(let code, _) = error, code == 400 else { throw error }
+                lastError = error
+            }
+        }
+
+        guard let response else { throw lastError ?? APIError.invalidResponse }
+
+        return response.items
             .map { Group(id: $0.id, name: $0.name, fullName: $0.field, facultyId: facultyId) }
             .sorted { $0.name.localizedCompare($1.name) == .orderedAscending }
     }
@@ -2045,7 +2064,7 @@ final class DVGUPSAPIClient: ObservableObject {
 
         // Сервер переехал с camelCase на snake_case и на старые имена отвечает
         // 400 «schedule_type must be one of...». Пробуем оба варианта.
-        var response: APIEnvelope<[ScheduleItemDTO]>?
+        var response: APIListEnvelope<ScheduleItemDTO>?
         var lastError: Error?
 
         for names in [("schedule_type", "start_date"), ("scheduleType", "startDate")] {
@@ -2072,7 +2091,7 @@ final class DVGUPSAPIClient: ObservableObject {
         var lessonsByDate: [Date: [Lesson]] = [:]
         var groupNameHits: [String: Int] = [:]
 
-        for item in response.data {
+        for item in response.items {
             guard let lessonDate = item.lessonDate,
                   let timeStartHHmm = item.startHHmm else {
                 continue
@@ -2138,6 +2157,27 @@ final class DVGUPSAPIClient: ObservableObject {
     private struct APIEnvelope<T: Decodable>: Decodable {
         let status: String?
         let data: T
+    }
+
+    /// Списки приходят двумя способами: старый `{"data":[ ... ]}`
+    /// и новый `{"success":true,"data":{"items":[ ... ]}}`.
+    private struct APIListEnvelope<Element: Decodable>: Decodable {
+        let items: [Element]
+
+        private enum CodingKeys: String, CodingKey { case data }
+        private enum DataKeys: String, CodingKey { case items }
+
+        init(from decoder: Decoder) throws {
+            let container = try decoder.container(keyedBy: CodingKeys.self)
+
+            if let nested = try? container.nestedContainer(keyedBy: DataKeys.self, forKey: .data),
+               let items = try? nested.decode([Element].self, forKey: .items) {
+                self.items = items
+                return
+            }
+
+            items = try container.decode([Element].self, forKey: .data)
+        }
     }
 
     private func request<T: Decodable>(
