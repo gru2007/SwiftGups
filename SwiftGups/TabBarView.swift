@@ -1854,6 +1854,7 @@ struct ProfileTab: View {
     @State private var showingDeleteConfirmation = false
     @State private var showingLessonTimes = false
     @State private var showingAbout = false
+    @State private var showingDiagnostics = false
     
     // Проверяем валидность пользователя
     private var isUserValid: Bool {
@@ -1898,6 +1899,12 @@ struct ProfileTab: View {
                                 title: "Расписание звонков",
                                 icon: "clock",
                                 action: { showingLessonTimes = true }
+                            )
+                            
+                            ProfileMenuItem(
+                                title: "Диагностика подключения",
+                                icon: "stethoscope",
+                                action: { showingDiagnostics = true }
                             )
                             
                             ProfileMenuItem(
@@ -1963,6 +1970,12 @@ struct ProfileTab: View {
                                 )
                                 
                                 ProfileMenuItem(
+                                    title: "Диагностика подключения",
+                                    icon: "stethoscope",
+                                    action: { showingDiagnostics = true }
+                                )
+                                
+                                ProfileMenuItem(
                                     title: "О приложении",
                                     icon: "info.circle",
                                     action: { showingAbout = true }
@@ -1992,6 +2005,12 @@ struct ProfileTab: View {
             if isUserValid {
                 EditProfileSheet(user: currentUser)
             }
+        }
+        .sheet(isPresented: $showingDiagnostics) {
+            APIDiagnosticsView(
+                groupId: isUserValid ? currentUser.groupId : "",
+                groupName: isUserValid ? currentUser.groupName : ""
+            )
         }
         .sheet(isPresented: $showingDVGUPSAuth) {
             DVGUPSAuthSheet()
@@ -2026,6 +2045,7 @@ struct ProfileTab: View {
         showingDVGUPSAuth = false
         showingDeleteConfirmation = false
         showingLessonTimes = false
+        showingDiagnostics = false
         showingAbout = false
         Task {
             do {

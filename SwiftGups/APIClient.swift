@@ -7,6 +7,10 @@ enum APIError: Error, LocalizedError {
     case parseError(String)
     case networkError(Error)
     case invalidResponse
+    /// Сервер ответил кодом вне 2xx. Код и путь нужны в тексте ошибки:
+    /// без них «неверный формат ответа» ничего не говорит ни пользователю,
+    /// ни тому, кто будет разбираться по скриншоту.
+    case unexpectedStatus(code: Int, path: String)
     case authenticationRequired
     case invalidCredentials
     case groupNotFound
@@ -27,6 +31,8 @@ enum APIError: Error, LocalizedError {
             return "Ошибка сети: \(error.localizedDescription)"
         case .invalidResponse:
             return "Неверный формат ответа сервера"
+        case .unexpectedStatus(let code, let path):
+            return "Сервер ответил \(code) на \(path)"
         case .authenticationRequired:
             return "Для доступа к расписанию нужен вход в ЛК ДВГУПС. Откройте вкладку «Профиль» и добавьте логин и пароль."
         case .invalidCredentials:
@@ -580,13 +586,8 @@ class DVGUPSAPIClient: ObservableObject {
         do {
             let (data, httpResponse) = try await performRequestHandlingAuthorization(request)
             
-            // Если запасной домен отвечает 5xx — пробуем fallback/ошибку отдать наверх через общий retry.
-            if (500...599).contains(httpResponse.statusCode), baseURL == primaryBaseURL {
-                throw APIError.invalidResponse
-            }
-            
             guard (200...299).contains(httpResponse.statusCode) else {
-                throw APIError.invalidResponse
+                throw APIError.unexpectedStatus(code: httpResponse.statusCode, path: path)
             }
             
             if let text = String(data: data, encoding: .utf8)?
@@ -658,7 +659,9 @@ class DVGUPSAPIClient: ObservableObject {
     private func applyDefaultHeaders(to request: inout URLRequest, baseURL: URL, path: String) {
         request.setValue(DVGUPSBrowserProfile.userAgent, forHTTPHeaderField: "User-Agent")
         request.setValue(DVGUPSBrowserProfile.acceptLanguage, forHTTPHeaderField: "Accept-Language")
-        request.setValue("keep-alive", forHTTPHeaderField: "Connection")
+        // `Connection` намеренно не ставим: в HTTP/2 этот заголовок запрещён
+        // (RFC 9113, 8.2.2), веб-версия его не шлёт, а соединениями и так
+        // управляет URLSession.
 
         guard baseURL.host == primaryBaseURL.host, path.hasPrefix("/api/v1/") else {
             request.setValue("application/json", forHTTPHeaderField: "Accept")
@@ -708,6 +711,9 @@ class DVGUPSAPIClient: ObservableObject {
                 return true
             case .invalidResponse:
                 return true
+            case .unexpectedStatus(let code, _):
+                // Повторяем только серверные сбои: 404 и 400 от повтора не исправятся.
+                return (500...599).contains(code)
             default:
                 return false
             }

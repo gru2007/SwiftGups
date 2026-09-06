@@ -164,7 +164,7 @@ enum DVGUPSBrowserProfile {
         request.setValue("cors", forHTTPHeaderField: "Sec-Fetch-Mode")
         request.setValue("empty", forHTTPHeaderField: "Sec-Fetch-Dest")
         request.setValue("u=3, i", forHTTPHeaderField: "Priority")
-        request.setValue("keep-alive", forHTTPHeaderField: "Connection")
+        // `Connection` в HTTP/2 запрещён (RFC 9113, 8.2.2) — не ставим.
         request.setValue(referer, forHTTPHeaderField: "Referer")
         if let contentType {
             request.setValue(contentType, forHTTPHeaderField: "Content-Type")
