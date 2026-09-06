@@ -138,11 +138,12 @@ private enum DebugMenuEnvironment {
     }
     
     static var isEnabled: Bool {
-        // В LiveContainer `appStoreReceiptURL` принадлежит хосту, поэтому
-        // проверка на TestFlight там ложно срабатывает, а обработчик крэшей
-        // DebugSwift падает сам (dladdr по чужим образам).
-        guard !AppEnvironment.isLiveContainerBuild else { return false }
-        return isDebug || isTestFlight
+        // В LiveContainer меню нужно: его сетевой лог — самый быстрый способ
+        // увидеть, что именно ответил сервер. Раньше оно было выключено из-за
+        // обработчика крэшей DebugSwift, который сам падал в dladdr, разбирая
+        // чужие образы, — но падал он, только пока приложение падало на
+        // CloudKit. Эту причину убрали, а инструмент вернули.
+        isDebug || isTestFlight || AppEnvironment.isLiveContainerBuild
     }
 }
 

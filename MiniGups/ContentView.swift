@@ -1703,6 +1703,8 @@ enum APIError: Error, LocalizedError {
     case parseError(String)
     case networkError(Error)
     case invalidResponse
+    /// Код вне 2xx: без кода и пути «неверный формат ответа» ничего не объясняет.
+    case unexpectedStatus(code: Int, path: String)
     case vpnOrBlockedNetwork
     case requestTimedOut(seconds: Int)
     case emptyResponse
@@ -1717,6 +1719,8 @@ enum APIError: Error, LocalizedError {
             return "Ошибка сети: \(error.localizedDescription)"
         case .invalidResponse:
             return "Неверный формат ответа сервера"
+        case .unexpectedStatus(let code, let path):
+            return "Сервер ответил \(code) на \(path)"
         case .vpnOrBlockedNetwork:
             return "Не удалось подключиться к серверу. Возможно включен VPN или сеть блокирует доступ к dvgups.ru. Отключите VPN и повторите попытку."
         case .requestTimedOut(let seconds):
@@ -1737,6 +1741,8 @@ final class DVGUPSAPIClient: ObservableObject {
     private let requestTimeoutSeconds: TimeInterval = 8
     /// Справочник групп нового API — выгружается постранично, поэтому кэшируем на время сессии.
     private var cachedGroupDirectory: [Group]?
+    /// Сервер режет запросы без браузерного User-Agent (403 + HTML).
+    fileprivate static let userAgent = "Mozilla/5.0 (iPhone; CPU iPhone OS 18_7 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/26.1 Mobile/15E148 Safari/604.1"
 
     init(session: URLSession = .shared) {
         self.session = session
@@ -2037,16 +2043,31 @@ final class DVGUPSAPIClient: ObservableObject {
             }
         }
 
-        let response: APIEnvelope<[ScheduleItemDTO]> = try await request(
-            baseURL: primaryBaseURL,
-            path: "/api/v1/timetable/schedule",
-            queryItems: [
-                URLQueryItem(name: "scheduleType", value: "gr"),
-                URLQueryItem(name: "parameter", value: groupId),
-                URLQueryItem(name: "days", value: String(daysCount)),
-                URLQueryItem(name: "startDate", value: startDateString)
-            ]
-        )
+        // Сервер переехал с camelCase на snake_case и на старые имена отвечает
+        // 400 «schedule_type must be one of...». Пробуем оба варианта.
+        var response: APIEnvelope<[ScheduleItemDTO]>?
+        var lastError: Error?
+
+        for names in [("schedule_type", "start_date"), ("scheduleType", "startDate")] {
+            do {
+                response = try await request(
+                    baseURL: primaryBaseURL,
+                    path: "/api/v1/timetable/schedule",
+                    queryItems: [
+                        URLQueryItem(name: names.0, value: "gr"),
+                        URLQueryItem(name: "parameter", value: groupId),
+                        URLQueryItem(name: "days", value: String(daysCount)),
+                        URLQueryItem(name: names.1, value: startDateString)
+                    ]
+                )
+                break
+            } catch let error as APIError {
+                guard case .unexpectedStatus(let code, _) = error, code == 400 else { throw error }
+                lastError = error
+            }
+        }
+
+        guard let response else { throw lastError ?? APIError.invalidResponse }
 
         var lessonsByDate: [Date: [Lesson]] = [:]
         var groupNameHits: [String: Int] = [:]
@@ -2147,17 +2168,18 @@ final class DVGUPSAPIClient: ObservableObject {
         var request = URLRequest(url: url)
         request.httpMethod = "GET"
         request.setValue("application/json", forHTTPHeaderField: "Accept")
+        // Без браузерного User-Agent сервер отдаёт 403 и HTML-страницу вместо JSON.
+        request.setValue(Self.userAgent, forHTTPHeaderField: "User-Agent")
+        request.setValue("ru-RU,ru;q=0.9", forHTTPHeaderField: "Accept-Language")
+        request.setValue("https://dvgups.ru/public/schedule/group", forHTTPHeaderField: "Referer")
         request.timeoutInterval = requestTimeoutSeconds
 
         do {
             let (data, response) = try await session.data(for: request)
             guard let http = response as? HTTPURLResponse else { throw APIError.invalidResponse }
 
-            if (500...599).contains(http.statusCode), baseURL == primaryBaseURL {
-                throw APIError.invalidResponse
-            }
             guard (200...299).contains(http.statusCode) else {
-                throw APIError.invalidResponse
+                throw APIError.unexpectedStatus(code: http.statusCode, path: path)
             }
             
             if let text = String(data: data, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines),

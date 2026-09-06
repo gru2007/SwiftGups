@@ -369,15 +369,10 @@ class DVGUPSAPIClient: ObservableObject {
         let daysCount = Self.computeDaysCount(startDate: startDate, endDate: endDate)
         let startDateString = DateFormatter.serverDateFormatter.string(from: startDate)
 
-        let response: APIEnvelope<[ScheduleItemDTO]> = try await request(
-            baseURL: primaryBaseURL,
-            path: "/api/v1/timetable/schedule",
-            queryItems: [
-                URLQueryItem(name: "scheduleType", value: "gr"),
-                URLQueryItem(name: "parameter", value: groupId),
-                URLQueryItem(name: "days", value: String(daysCount)),
-                URLQueryItem(name: "startDate", value: startDateString)
-            ]
+        let response: APIEnvelope<[ScheduleItemDTO]> = try await requestSchedule(
+            groupId: groupId,
+            daysCount: daysCount,
+            startDateString: startDateString
         )
 
         // Группируем по дате
@@ -451,6 +446,62 @@ class DVGUPSAPIClient: ObservableObject {
             endDate: endDate,
             days: days
         )
+    }
+
+    /// Имена query-параметров расписания.
+    ///
+    /// Сервер переехал с camelCase на snake_case и на старые имена отвечает
+    /// 400 «schedule_type must be one of...». Держим оба варианта: сначала
+    /// текущий, при 400 — прежний, чтобы приложение пережило и обратный
+    /// переезд, и разные версии API у вуза и техникумов.
+    private enum ScheduleParameterNaming: CaseIterable {
+        case snakeCase
+        case camelCase
+
+        var scheduleType: String {
+            switch self {
+            case .snakeCase: return "schedule_type"
+            case .camelCase: return "scheduleType"
+            }
+        }
+
+        var startDate: String {
+            switch self {
+            case .snakeCase: return "start_date"
+            case .camelCase: return "startDate"
+            }
+        }
+    }
+
+    private func requestSchedule(
+        groupId: String,
+        daysCount: Int,
+        startDateString: String
+    ) async throws -> APIEnvelope<[ScheduleItemDTO]> {
+        var lastError: Error?
+
+        for naming in ScheduleParameterNaming.allCases {
+            do {
+                return try await request(
+                    baseURL: primaryBaseURL,
+                    path: "/api/v1/timetable/schedule",
+                    queryItems: [
+                        URLQueryItem(name: naming.scheduleType, value: "gr"),
+                        URLQueryItem(name: "parameter", value: groupId),
+                        URLQueryItem(name: "days", value: String(daysCount)),
+                        URLQueryItem(name: naming.startDate, value: startDateString)
+                    ]
+                )
+            } catch let error as APIError {
+                // 400 — сервер не понял имена параметров, есть смысл пробовать
+                // другой вариант. Всё остальное повторять бессмысленно.
+                guard case .unexpectedStatus(let code, _) = error, code == 400 else { throw error }
+                print("⚠️ Расписание: сервер не принял параметры \(naming), пробуем другой вариант")
+                lastError = error
+            }
+        }
+
+        throw lastError ?? APIError.invalidResponse
     }
 
     /// Сортирует пары дня по времени и проставляет номера.

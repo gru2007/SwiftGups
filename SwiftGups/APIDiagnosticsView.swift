@@ -171,19 +171,19 @@ struct APIDiagnosticsRunner {
 
     /// Набор заголовков запроса.
     ///
-    /// Приложение шлёт больше заголовков, чем веб-версия (Sec-Fetch-*, Priority,
-    /// Connection, поддельный User-Agent). Если сервер отвечает по-разному —
-    /// значит дело в них, и это видно сразу, без гаданий.
+    /// Сервер режет запросы без браузерного User-Agent: отдаёт 403 и HTML-страницу
+    /// вместо JSON. Поэтому «как приложение» — рабочий набор, а вариант без
+    /// User-Agent оставлен одной контрольной строкой, чтобы это было видно.
     enum HeaderStyle {
-        /// Как в HAR веб-версии: минимум.
-        case browser
         /// Как шлёт `DVGUPSAPIClient`.
         case app
+        /// Без User-Agent — URLSession подставляет свой.
+        case noUserAgent
 
         var title: String {
             switch self {
-            case .browser: return "заголовки браузера"
             case .app: return "заголовки приложения"
+            case .noUserAgent: return "без User-Agent"
             }
         }
     }
@@ -197,19 +197,29 @@ struct APIDiagnosticsRunner {
         let startDate = DateFormatter.serverDateFormatter.string(from: weekStart)
 
         var checks: [(String, String, HeaderStyle)] = [
-            ("Учебные недели", "/api/v1/timetable/weeks", .browser),
-            ("Справочник групп (новый API)", "/api/v1/timetable/groups/options?page=1&limit=5", .browser),
-            ("Поиск группы", "/api/v1/timetable/groups/options?page=1&limit=5&q=%D0%91%D0%9E", .browser),
-            ("Институты (старый API)", "/api/v1/timetable/faculties", .browser)
+            ("Учебные недели", "/api/v1/timetable/weeks", .app),
+            ("Справочник групп", "/api/v1/timetable/groups/options?page=1&limit=5", .app),
+            ("Поиск группы", "/api/v1/timetable/groups/options?page=1&limit=5&q=%D0%91%D0%9E", .app),
+            ("Институты (старый API)", "/api/v1/timetable/faculties", .app)
         ]
 
         if !groupId.isEmpty {
-            let schedulePath = "/api/v1/timetable/schedule?scheduleType=gr&parameter=\(groupId)&days=7&startDate=\(startDate)"
-            // Один и тот же запрос двумя наборами заголовков: если разойдутся —
-            // виноваты заголовки, а не сервер и не параметры.
-            checks.append(("Расписание группы", schedulePath, .browser))
-            checks.append(("Расписание группы", schedulePath, .app))
+            // Сервер переехал на snake_case; camelCase проверяем следом, чтобы
+            // видеть, какой вариант принимает текущий деплой.
+            checks.append((
+                "Расписание (snake_case)",
+                "/api/v1/timetable/schedule?schedule_type=gr&parameter=\(groupId)&days=7&start_date=\(startDate)",
+                .app
+            ))
+            checks.append((
+                "Расписание (camelCase)",
+                "/api/v1/timetable/schedule?scheduleType=gr&parameter=\(groupId)&days=7&startDate=\(startDate)",
+                .app
+            ))
         }
+
+        // Контрольная строка: показывает, что без User-Agent приходит 403.
+        checks.append(("Контроль WAF", "/api/v1/timetable/weeks", .noUserAgent))
 
         return AsyncStream { continuation in
             Task {
@@ -274,20 +284,15 @@ struct APIDiagnosticsRunner {
         request.setValue("application/json", forHTTPHeaderField: "Accept")
         request.setValue("https://dvgups.ru/public/schedule/group", forHTTPHeaderField: "Referer")
 
-        switch style {
-        case .browser:
-            request.setValue("ru-RU,ru;q=0.9,en-US;q=0.8,en;q=0.7", forHTTPHeaderField: "Accept-Language")
+        guard style == .app else { return }
 
-        case .app:
-            request.setValue(DVGUPSBrowserProfile.userAgent, forHTTPHeaderField: "User-Agent")
-            request.setValue(DVGUPSBrowserProfile.acceptLanguage, forHTTPHeaderField: "Accept-Language")
-            request.setValue("keep-alive", forHTTPHeaderField: "Connection")
-            request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-            request.setValue("same-origin", forHTTPHeaderField: "Sec-Fetch-Site")
-            request.setValue("cors", forHTTPHeaderField: "Sec-Fetch-Mode")
-            request.setValue("empty", forHTTPHeaderField: "Sec-Fetch-Dest")
-            request.setValue("u=3, i", forHTTPHeaderField: "Priority")
-        }
+        request.setValue(DVGUPSBrowserProfile.userAgent, forHTTPHeaderField: "User-Agent")
+        request.setValue(DVGUPSBrowserProfile.acceptLanguage, forHTTPHeaderField: "Accept-Language")
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.setValue("same-origin", forHTTPHeaderField: "Sec-Fetch-Site")
+        request.setValue("cors", forHTTPHeaderField: "Sec-Fetch-Mode")
+        request.setValue("empty", forHTTPHeaderField: "Sec-Fetch-Dest")
+        request.setValue("u=3, i", forHTTPHeaderField: "Priority")
     }
 
     /// Короткая выжимка тела: сколько элементов пришло или начало ответа.
@@ -295,7 +300,9 @@ struct APIDiagnosticsRunner {
         let text = String(data: data, encoding: .utf8) ?? "<не UTF-8>"
 
         guard isSuccess else {
-            return "\(data.count) Б · \(text.prefix(200))"
+            // Тело ошибки показываем целиком: в нём и лежит объяснение
+            // («schedule_type must be one of...»), обрезать его нельзя.
+            return "\(data.count) Б · \(text.prefix(1200))"
         }
 
         if let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
