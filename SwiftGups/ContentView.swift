@@ -16,7 +16,6 @@ enum ScheduleViewMode: String, CaseIterable, Identifiable {
 
 struct ContentView: View {
     @StateObject private var scheduleService: ScheduleService
-    @State private var searchText = ""
     @State private var showDatePicker = false
     @State private var selectedLesson: Lesson? = nil
     @State private var selectedDay: ScheduleDay? = nil
@@ -66,10 +65,6 @@ struct ContentView: View {
                                 HeaderView()
                             }
                             
-                            // Выбор факультета
-                            if showUserInfo {
-                                FacultySelectionView(scheduleService: scheduleService)
-                            }
                             
                             // Выбор даты
                             DateSelectionView(
@@ -78,9 +73,9 @@ struct ContentView: View {
                                 viewMode: $scheduleViewMode
                             )
                             
-                            // Поиск и выбор группы
-                            if scheduleService.selectedFaculty != nil && showUserInfo {
-                                GroupSelectionView(scheduleService: scheduleService, searchText: $searchText)
+                            // Выбор группы: институт выбирать не нужно
+                            if showUserInfo {
+                                GroupSelectionView(scheduleService: scheduleService)
                             }
                             
                             // Отображение расписания
@@ -108,10 +103,7 @@ struct ContentView: View {
         .task {
             // В standalone режиме подгружаем группы автоматически, встраиваемый режим (в табе) управляется снаружи
             guard showUserInfo else { return }
-            await scheduleService.ensureFacultiesLoaded()
-            if scheduleService.selectedFaculty != nil {
-                await scheduleService.loadGroups()
-            }
+            await scheduleService.ensureGroupDirectoryLoaded()
         }
     }
 }
@@ -140,101 +132,6 @@ struct HeaderView: View {
                 .fill(Color(.systemBackground))
                 .shadow(color: .black.opacity(0.1), radius: 5, x: 0, y: 2)
         )
-    }
-}
-
-// MARK: - Faculty Selection View
-
-struct FacultySelectionView: View {
-    @ObservedObject var scheduleService: ScheduleService
-    @State private var showVPNHint = false
-    @State private var vpnHintTask: Task<Void, Never>?
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            Label("Институт/Факультет", systemImage: "building.2")
-                .font(.headline)
-                .foregroundColor(.primary)
-            
-            Menu {
-                if scheduleService.isLoadingFaculties {
-                    Text("Загрузка институтов...")
-                } else if scheduleService.faculties.isEmpty {
-                    Text("Нет доступных институтов")
-                } else {
-                    ForEach(scheduleService.faculties) { faculty in
-                        Button(action: {
-                            scheduleService.selectFaculty(faculty)
-                        }) {
-                            HStack {
-                                Text(faculty.name)
-                                if scheduleService.selectedFaculty?.id == faculty.id {
-                                    Spacer()
-                                    Image(systemName: "checkmark")
-                                }
-                            }
-                        }
-                    }
-                }
-            } label: {
-                HStack {
-                    Text(scheduleService.selectedFaculty?.name ?? (scheduleService.isLoadingFaculties ? "Загрузка..." : "Выберите институт/факультет"))
-                        .foregroundColor(scheduleService.selectedFaculty != nil ? .primary : .secondary)
-                    
-                    Spacer()
-                    
-                    Image(systemName: "chevron.down")
-                        .foregroundColor(.secondary)
-                }
-                .padding()
-                .background(
-                    RoundedRectangle(cornerRadius: 12)
-                        .fill(Color(.systemGray6))
-                        .stroke(Color(.systemGray4), lineWidth: 1)
-                )
-            }
-
-            if showVPNHint {
-                VPNHintBanner()
-            }
-            
-            FacultyMissingIdBanner(missingNames: scheduleService.facultiesMissingIDs)
-        }
-        .padding()
-        .background(
-            RoundedRectangle(cornerRadius: 16)
-                .fill(Color(.systemBackground))
-                .shadow(color: .black.opacity(0.1), radius: 5, x: 0, y: 2)
-        )
-        .onAppear {
-            updateVPNHint(isLoading: scheduleService.isLoadingFaculties)
-        }
-        .onChange(of: scheduleService.isLoadingFaculties) { newValue in
-            updateVPNHint(isLoading: newValue)
-        }
-    }
-
-    private func updateVPNHint(isLoading: Bool) {
-        vpnHintTask?.cancel()
-        vpnHintTask = nil
-
-        if !isLoading {
-            withAnimation(.easeInOut(duration: 0.2)) {
-                showVPNHint = false
-            }
-            return
-        }
-
-        vpnHintTask = Task {
-            try? await Task.sleep(nanoseconds: 6_000_000_000)
-            guard !Task.isCancelled else { return }
-            guard scheduleService.isLoadingFaculties else { return }
-            await MainActor.run {
-                withAnimation(.easeInOut(duration: 0.2)) {
-                    showVPNHint = true
-                }
-            }
-        }
     }
 }
 
@@ -446,75 +343,13 @@ struct DateSelectionView: View {
 
 struct GroupSelectionView: View {
     @ObservedObject var scheduleService: ScheduleService
-    @Binding var searchText: String
-    @State private var showVPNHint = false
-    @State private var vpnHintTask: Task<Void, Never>?
-    
-    private var filteredGroups: [Group] {
-        scheduleService.filteredGroups(searchText: searchText)
-    }
-    
-    var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            Label("Группа", systemImage: "person.3")
-                .font(.headline)
-                .foregroundColor(.primary)
-            
-            // Поле поиска
-            HStack {
-                Image(systemName: "magnifyingglass")
-                    .foregroundColor(.secondary)
-                
-                TextField("Поиск группы...", text: $searchText)
-                    .textFieldStyle(RoundedBorderTextFieldStyle())
-                
-                if !searchText.isEmpty {
-                    Button("Очистить") {
-                        searchText = ""
-                    }
-                    .font(.caption)
-                    .foregroundColor(.blue)
-                }
-            }
-            .padding(.horizontal)
-            
-            if scheduleService.isLoadingGroups {
-                HStack {
-                    Spacer()
-                    VStack(spacing: 10) {
-                        ProgressView("Загрузка групп...")
-                            .progressViewStyle(CircularProgressViewStyle())
-                        if showVPNHint {
-                            VPNHintBanner()
-                                .frame(maxWidth: 340)
-                        }
-                    }
-                    Spacer()
-                }
-                .padding()
-            } else if filteredGroups.isEmpty && scheduleService.selectedFaculty != nil {
-                Text("Группы не найдены")
-                    .foregroundColor(.secondary)
-                    .frame(maxWidth: .infinity, alignment: .center)
-                    .padding()
-            } else {
-                LazyVGrid(
-                    columns: [GridItem(.adaptive(minimum: 160), spacing: 12)],
-                    spacing: 12
-                ) {
-                    ForEach(filteredGroups) { group in
-                        GroupCard(
-                            group: group,
-                            isSelected: scheduleService.selectedGroup?.id == group.id
-                        ) {
-                            scheduleService.selectGroup(group)
-                        }
-                    }
-                }
-                .padding(.horizontal)
-            }
 
-            GroupSearchFooter(scheduleService: scheduleService, searchText: searchText)
+    var body: some View {
+        GroupPicker(
+            scheduleService: scheduleService,
+            selectedGroupId: scheduleService.selectedGroup?.id
+        ) { group in
+            scheduleService.selectGroup(group)
         }
         .padding()
         .background(
@@ -522,69 +357,6 @@ struct GroupSelectionView: View {
                 .fill(Color(.systemBackground))
                 .shadow(color: .black.opacity(0.1), radius: 5, x: 0, y: 2)
         )
-        .onAppear {
-            updateVPNHint(isLoading: scheduleService.isLoadingGroups)
-        }
-        .onChange(of: scheduleService.isLoadingGroups) { newValue in
-            updateVPNHint(isLoading: newValue)
-        }
-        .onChange(of: searchText) { newValue in
-            scheduleService.searchGroups(query: newValue)
-        }
-    }
-
-    private func updateVPNHint(isLoading: Bool) {
-        vpnHintTask?.cancel()
-        vpnHintTask = nil
-
-        if !isLoading {
-            withAnimation(.easeInOut(duration: 0.2)) {
-                showVPNHint = false
-            }
-            return
-        }
-
-        vpnHintTask = Task {
-            try? await Task.sleep(nanoseconds: 6_000_000_000)
-            guard !Task.isCancelled else { return }
-            guard scheduleService.isLoadingGroups else { return }
-            await MainActor.run {
-                withAnimation(.easeInOut(duration: 0.2)) {
-                    showVPNHint = true
-                }
-            }
-        }
-    }
-}
-
-// MARK: - Group Card
-
-struct GroupCard: View {
-    let group: Group
-    let isSelected: Bool
-    let action: () -> Void
-    
-    var body: some View {
-        Button(action: action) {
-            VStack(alignment: .leading, spacing: 8) {
-                Text(group.name)
-                    .font(.subheadline)
-                    .fontWeight(.semibold)
-                    .foregroundColor(isSelected ? .white : .primary)
-                
-                Text(group.fullName)
-                    .font(.caption)
-                    .foregroundColor(isSelected ? .white.opacity(0.8) : .secondary)
-                    .multilineTextAlignment(.leading)
-                    .lineLimit(2)
-            }
-            .padding()
-            .frame(maxWidth: .infinity, minHeight: 80, maxHeight: 92, alignment: .leading)
-            .background(
-                RoundedRectangle(cornerRadius: 12)
-                    .fill(isSelected ? Color.blue : Color(.systemGray6))
-            )
-        }
     }
 }
 
@@ -618,11 +390,7 @@ struct ScheduleDisplayView: View {
                 }
             }
             
-            if scheduleService.isLoadingFaculties {
-                LoadingView(title: "Загрузка институтов...", scheduleService: scheduleService)
-            } else if scheduleService.isLoadingGroups {
-                LoadingView(title: "Загрузка групп...", scheduleService: scheduleService)
-            } else if scheduleService.isLoadingSchedule {
+            if scheduleService.isLoadingSchedule {
                 LoadingView(title: "Загрузка расписания...", scheduleService: scheduleService)
             } else if let schedule = scheduleService.currentSchedule {
                 ScheduleMainView(

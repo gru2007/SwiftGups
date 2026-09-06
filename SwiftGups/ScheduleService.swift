@@ -5,31 +5,22 @@ import Foundation
 class ScheduleService: ObservableObject {
     
     @Published var faculties: [Faculty] = []
-    @Published var facultiesMissingIDs: [String] = []
     @Published var selectedFaculty: Faculty?
-    @Published var groups: [Group] = []
     @Published var selectedGroup: Group?
     @Published var currentSchedule: Schedule?
     @Published var selectedDate: Date = Date()
 
-    /// Результаты серверного поиска групп (новый API `/groups/options?q=`).
-    @Published var groupSearchResults: [Group] = []
-    @Published var isSearchingGroups = false
-    /// Есть ли ещё страницы под текущий запрос.
-    @Published var groupSearchHasMore = false
+    /// Единый справочник групп: вуз (новый API) плюс техникумы (старый).
+    ///
+    /// Именно по нему идёт выбор группы — без предварительного выбора института.
+    @Published var allGroups: [Group] = []
+    @Published var isLoadingDirectory = false
+    @Published var directoryError: String?
+
     /// Календарь учебных недель из нового API. Пустой — работаем по календарным неделям.
     @Published var weeks: [ScheduleWeek] = []
 
-    /// Полный справочник групп вуза — страховка для поиска без сети.
-    private var groupDirectory: [Group] = []
-    private var groupSearchQuery: String = ""
-    private var groupSearchPage: Int = 1
-    private var groupSearchTask: Task<Void, Never>?
     private var didLoadWeeks = false
-
-    /// Пауза перед запросом, чтобы не дёргать сервер на каждую букву.
-    private static let groupSearchDebounce: UInt64 = 300_000_000
-    private static let groupSearchPageSize = 50
 
     enum DataSource: Equatable {
         case network
@@ -64,10 +55,9 @@ class ScheduleService: ObservableObject {
     @Published var recoveryAction: RecoveryAction? = nil
     
     @Published var isLoadingFaculties = false
-    @Published var isLoadingGroups = false
     @Published var isLoadingSchedule = false
-    
-    var isLoading: Bool { isLoadingFaculties || isLoadingGroups || isLoadingSchedule }
+
+    var isLoading: Bool { isLoadingFaculties || isLoadingDirectory || isLoadingSchedule }
     @Published var errorMessage: String?
     
     private let apiClient: DVGUPSAPIClient
@@ -107,112 +97,33 @@ class ScheduleService: ObservableObject {
         
         do {
             let result = try await apiClient.fetchFaculties()
-            // Если API прислал пустой список факультетов — не подменяем статикой.
-            // Если API прислал только факультеты без ID — они будут показаны баннером в UI.
+            // Список институтов нужен только чтобы подписывать группы и добирать
+            // техникумы со старого API. Сам по себе он больше ничего не выбирает.
             faculties = result.faculties
-            facultiesMissingIDs = result.missingIdNames
             didLoadFaculties = true
-            
+
             // Кэшируем для оффлайн-режима
             cache.write(faculties, for: .faculties)
-            
-            // Выбор дефолтного института (если ещё ничего не выбрано)
-            if selectedFaculty == nil {
-                selectedFaculty = faculties.first(where: { $0.id == "2" }) ?? faculties.first
-            } else if let selected = selectedFaculty {
-                // Если selectedFaculty пришел из старого/статического списка — обновим ссылку на объект из актуального массива
+
+            // Институт следует за выбранной группой, а не наоборот, поэтому
+            // умолчания тут больше нет — только обновление ссылки на объект.
+            if let selected = selectedFaculty {
                 selectedFaculty = faculties.first(where: { $0.id == selected.id }) ?? selectedFaculty
             }
         } catch {
             // Оффлайн: пробуем показать то, что было сохранено ранее.
             if let cached: [Faculty] = cache.read([Faculty].self, for: .faculties), !cached.isEmpty {
                 faculties = cached
-                facultiesMissingIDs = []
                 didLoadFaculties = true
                 errorMessage = nil
             } else {
                 // По ТЗ: статический список больше не актуален — не используем его.
-                facultiesMissingIDs = []
                 didLoadFaculties = true
                 applyErrorState(error)
             }
         }
         
         isLoadingFaculties = false
-    }
-    
-    /// Загружает список групп для выбранного факультета
-    func loadGroups() async {
-        guard let faculty = selectedFaculty else {
-            errorMessage = "Факультет не выбран"
-            return
-        }
-        
-        print("🔄 ScheduleService.loadGroups() started for faculty: \(faculty.id) (\(faculty.name))")
-        isLoadingGroups = true
-        clearTransientState()
-        defer { isLoadingGroups = false }
-        
-        do {
-            let fetchedGroups = try await apiClient.fetchGroups(for: faculty.id)
-            print("✅ Successfully fetched \(fetchedGroups.count) groups for faculty \(faculty.id)")
-            groups = fetchedGroups
-            selectedGroup = nil // Сбрасываем выбранную группу
-            
-            cache.write(groups, for: .groups(facultyId: faculty.id))
-            await refreshGroupDirectoryCache()
-
-            if fetchedGroups.isEmpty {
-                print("⚠️ No groups found for faculty \(faculty.id)")
-                errorMessage = "Группы для данного факультета не найдены"
-            }
-        } catch {
-            if Self.isCancelled(error) {
-                // Не показываем "отменено" пользователю, просто выходим.
-                print("⚠️ loadGroups cancelled")
-                return
-            }
-            print("❌ Error fetching groups: \(error.localizedDescription)")
-            // Оффлайн: пробуем кэш групп по факультету
-            if let cached: [Group] = cache.read([Group].self, for: .groups(facultyId: faculty.id)), !cached.isEmpty {
-                groups = cached
-                errorMessage = nil
-            } else {
-                if let apiError = error as? APIError {
-                    print("❌ API Error details: \(apiError)")
-                }
-                applyErrorState(error)
-                groups = []
-            }
-        }
-
-        print("🏁 ScheduleService.loadGroups() finished. Groups count: \(groups.count)")
-    }
-    
-    /// Загружает список групп для конкретного факультета
-    func loadGroups(for facultyId: String, date: Date? = nil) async {
-        print("🔄 ScheduleService.loadGroups(for: \(facultyId)) started")
-        isLoadingGroups = true
-        clearTransientState()
-        
-        do {
-            let fetchedGroups = try await apiClient.fetchGroups(for: facultyId)
-            print("✅ Successfully fetched \(fetchedGroups.count) groups for faculty \(facultyId)")
-            groups = fetchedGroups
-            selectedGroup = nil
-            
-            if fetchedGroups.isEmpty {
-                print("⚠️ No groups found for faculty \(facultyId)")
-                errorMessage = "Группы для данного факультета не найдены"
-            }
-        } catch {
-            print("❌ Error fetching groups for faculty \(facultyId): \(error.localizedDescription)")
-            applyErrorState(error)
-            groups = []
-        }
-        
-        isLoadingGroups = false
-        print("🏁 ScheduleService.loadGroups(for: \(facultyId)) finished. Groups count: \(groups.count)")
     }
     
     /// Загружает расписание для выбранной группы
@@ -278,24 +189,6 @@ class ScheduleService: ObservableObject {
         isLoadingSchedule = false
     }
     
-    /// Выбирает факультет и загружает его группы
-    func selectFaculty(_ faculty: Faculty) {
-        print("🎯 ScheduleService.selectFaculty() called for: \(faculty.name) (id: \(faculty.id))")
-        selectedFaculty = faculty
-        selectedGroup = nil
-        currentSchedule = nil
-        scheduleDataSource = .network
-        scheduleNotice = nil
-        recoveryAction = nil
-        groups = []
-        clearGroupSearch()
-        isLoadingGroups = true
-
-        Task {
-            await loadGroups()
-        }
-    }
-    
     /// Выбирает группу и загружает её недельное расписание
     func selectGroup(_ group: Group) {
         selectedGroup = group
@@ -317,53 +210,23 @@ class ScheduleService: ObservableObject {
     
     /// Восстанавливает сохранённый выбор пользователя и грузит его расписание.
     ///
-    /// После переезда групп вуза на новый справочник сохранённый институт может
-    /// больше не содержать нужную группу (или сам институт мог исчезнуть).
-    /// Поэтому ищем группу по цепочке: список института → справочник вуза по ID →
-    /// справочник по названию. Расписанию достаточно ID группы, так что в крайнем
-    /// случае собираем группу из сохранённых данных.
+    /// Группу ищем в общем справочнике: сначала по ID, затем по названию — после
+    /// переезда на новый API ID группы мог смениться. Расписанию достаточно ID,
+    /// поэтому в крайнем случае собираем группу из сохранённых данных.
     func restoreSelection(facultyId: String, groupId: String, groupName: String) async {
         guard !groupId.isEmpty else { return }
 
-        await ensureFacultiesLoaded()
+        await ensureGroupDirectoryLoaded()
 
-        if let faculty = faculties.first(where: { $0.id == facultyId }) {
-            selectedFaculty = faculty
-            selectedGroup = nil
-            currentSchedule = nil
-            groups = []
-            await loadGroups()
-
-            if let group = groups.first(where: { $0.id == groupId }) {
-                selectGroup(group)
-                return
-            }
-        }
-
-        if let group = await findGroupInDirectory(id: groupId, name: groupName) {
-            print("↩️ Группа \(groupId) найдена в справочнике вуза, институт обновлён")
+        if let group = group(id: groupId, name: groupName) {
             selectGroup(group)
             return
         }
 
-        print("⚠️ Группа \(groupId) не найдена в справочниках — грузим расписание по сохранённому ID")
+        // Справочник не загрузился или группа из него пропала — расписанию
+        // достаточно ID, поэтому собираем группу из сохранённых данных.
+        print("⚠️ Группа \(groupId) не найдена в справочнике — грузим расписание по сохранённому ID")
         selectGroup(Group(id: groupId, name: groupName, fullName: "", facultyId: facultyId))
-    }
-
-    private func findGroupInDirectory(id: String, name: String) async -> Group? {
-        if let directory = try? await apiClient.fetchGroupDirectory(), !directory.isEmpty {
-            groupDirectory = directory
-            cache.write(directory, for: .groupDirectory)
-        } else if groupDirectory.isEmpty,
-                  let cached: [Group] = cache.read([Group].self, for: .groupDirectory) {
-            groupDirectory = cached
-        }
-
-        if let byId = groupDirectory.first(where: { $0.id == id }) { return byId }
-
-        let trimmedName = name.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmedName.isEmpty else { return nil }
-        return groupDirectory.first { $0.name.caseInsensitiveCompare(trimmedName) == .orderedSame }
     }
 
     /// Изменяет выбранную дату и обновляет данные
@@ -387,142 +250,97 @@ class ScheduleService: ObservableObject {
         currentSchedule = nil
         scheduleDataSource = .network
         scheduleNotice = nil
-        groups = []
         errorMessage = nil
-        clearGroupSearch()
     }
     
-    /// Возвращает отфильтрованные группы по поисковому запросу.
-    ///
-    /// Сначала показываем совпадения в уже загруженном списке факультета,
-    /// затем — то, что нашёл сервер по всему вузу (новый API `/groups/options?q=`).
-    func filteredGroups(searchText: String) -> [Group] {
-        let query = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !query.isEmpty else { return groups }
+    // MARK: - Единый справочник групп
 
-        let local = groups.filter { group in
-            group.name.localizedCaseInsensitiveContains(query) ||
-            group.fullName.localizedCaseInsensitiveContains(query)
-        }
-
-        guard !groupSearchResults.isEmpty else { return local }
-
-        var seen = Set(local.map { $0.id })
-        return local + groupSearchResults.filter { seen.insert($0.id).inserted }
+    /// Загружает справочник один раз за сессию.
+    func ensureGroupDirectoryLoaded() async {
+        guard allGroups.isEmpty, !isLoadingDirectory else { return }
+        await loadGroupDirectory()
     }
 
-    // MARK: - Поиск групп по всему вузу (новый API)
-
-    /// Запускает серверный поиск групп с задержкой (debounce).
+    /// Загружает единый справочник групп: вуз (новый API) плюс техникумы (старый).
     ///
-    /// Новый справочник ищет по всему вузу сразу, поэтому группу можно найти,
-    /// даже если выбран не тот институт (или институт вообще не выбран).
-    func searchGroups(query: String) {
-        let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
+    /// Справочник грузится целиком и кэшируется, поэтому поиск потом идёт
+    /// локально — мгновенно и без сети. Пользователю не нужно знать, на каком
+    /// API живёт его группа, и не нужно сначала выбирать институт.
+    func loadGroupDirectory() async {
+        isLoadingDirectory = true
+        directoryError = nil
+        defer { isLoadingDirectory = false }
 
-        groupSearchTask?.cancel()
-        groupSearchQuery = trimmed
-        groupSearchPage = 1
+        // Названия институтов нужны, чтобы подписать группы и добрать техникумы.
+        await ensureFacultiesLoaded()
 
-        // Односимвольный запрос вернёт полсправочника — ждём осмысленного ввода.
-        guard trimmed.count >= 2 else {
-            groupSearchResults = []
-            groupSearchHasMore = false
-            isSearchingGroups = false
+        let directory = await apiClient.fetchCombinedGroupDirectory(faculties: faculties)
+
+        guard !directory.isEmpty else {
+            if let cached: [Group] = cache.read([Group].self, for: .groupDirectory), !cached.isEmpty {
+                allGroups = cached
+                print("📦 Справочник групп взят из кэша: \(cached.count)")
+            } else {
+                directoryError = "Не удалось загрузить список групп. Проверьте соединение и повторите."
+            }
             return
         }
 
-        let debounce = ScheduleService.groupSearchDebounce
-        isSearchingGroups = true
-        groupSearchTask = Task { [weak self] in
-            try? await Task.sleep(nanoseconds: debounce)
-            guard !Task.isCancelled else { return }
-            await self?.performGroupSearch(query: trimmed, page: 1, replacing: true)
-        }
+        allGroups = directory
+        cache.write(directory, for: .groupDirectory)
+        print("✅ Справочник групп загружен: \(directory.count)")
     }
 
-    /// Догружает следующую страницу результатов поиска.
-    func loadMoreGroupSearchResults() {
-        guard groupSearchHasMore, !isSearchingGroups, !groupSearchQuery.isEmpty else { return }
+    /// Группы под поисковый запрос и (необязательный) фильтр по институту.
+    ///
+    /// Поиск локальный: справочник уже целиком в памяти. Совпадение по началу
+    /// названия поднимается наверх — набирая «БОД21», человек ищет группу,
+    /// а не специальность, в которой встретилась эта подстрока.
+    func filteredGroups(matching searchText: String, facultyId: String? = nil) -> [Group] {
+        var result = allGroups
 
-        let query = groupSearchQuery
-        let nextPage = groupSearchPage + 1
-
-        isSearchingGroups = true
-        groupSearchTask?.cancel()
-        groupSearchTask = Task { [weak self] in
-            await self?.performGroupSearch(query: query, page: nextPage, replacing: false)
-        }
-    }
-
-    private func performGroupSearch(query: String, page: Int, replacing: Bool) async {
-        do {
-            let result = try await apiClient.fetchGroupOptions(
-                query: query,
-                page: page,
-                limit: ScheduleService.groupSearchPageSize
-            )
-
-            // Пока шёл запрос, пользователь мог набрать что-то другое —
-            // тогда результат уже неактуален, а флаг загрузки принадлежит новому поиску.
-            guard !Task.isCancelled, groupSearchQuery == query else { return }
-
-            if replacing {
-                groupSearchResults = result.groups
-            } else {
-                var seen = Set(groupSearchResults.map { $0.id })
-                groupSearchResults += result.groups.filter { seen.insert($0.id).inserted }
-            }
-
-            groupSearchPage = page
-            groupSearchHasMore = result.hasMore
-            isSearchingGroups = false
-        } catch {
-            guard !Self.isCancelled(error), groupSearchQuery == query else { return }
-
-            // Поиск — вспомогательный путь: локальная фильтрация продолжает работать,
-            // поэтому ошибку не выводим в общий баннер.
-            print("❌ Group search failed for \"\(query)\": \(error.localizedDescription)")
-            groupSearchHasMore = false
-            if replacing {
-                groupSearchResults = offlineGroupMatches(for: query)
-            }
-            isSearchingGroups = false
-        }
-    }
-
-    /// Поиск по сохранённому справочнику, когда сервер недоступен.
-    private func offlineGroupMatches(for query: String) -> [Group] {
-        if groupDirectory.isEmpty,
-           let cached: [Group] = cache.read([Group].self, for: .groupDirectory) {
-            groupDirectory = cached
+        if let facultyId, !facultyId.isEmpty {
+            result = result.filter { $0.facultyId == facultyId }
         }
 
-        return groupDirectory.filter { group in
+        let query = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !query.isEmpty else { return result }
+
+        let matches = result.filter { group in
             group.name.localizedCaseInsensitiveContains(query) ||
             group.fullName.localizedCaseInsensitiveContains(query)
         }
+
+        return matches.sorted { lhs, rhs in
+            let lhsPrefix = lhs.name.lowercased().hasPrefix(query.lowercased())
+            let rhsPrefix = rhs.name.lowercased().hasPrefix(query.lowercased())
+            if lhsPrefix != rhsPrefix { return lhsPrefix }
+            return lhs.name.localizedCompare(rhs.name) == .orderedAscending
+        }
     }
 
-    /// Обновляет сохранённый справочник групп.
+    /// Институты, у которых в справочнике есть хотя бы одна группа.
     ///
-    /// Клиент держит справочник в памяти после первой выгрузки, поэтому
-    /// повторный вызов сетевых запросов не делает.
-    private func refreshGroupDirectoryCache() async {
-        guard let directory = try? await apiClient.fetchGroupDirectory(), !directory.isEmpty else { return }
-        groupDirectory = directory
-        cache.write(directory, for: .groupDirectory)
+    /// Показывать в фильтре институт без групп бессмысленно — по нему всегда
+    /// будет пусто.
+    var facultiesWithGroups: [Faculty] {
+        let ids = Set(allGroups.map { $0.facultyId })
+        return faculties.filter { ids.contains($0.id) }
     }
 
-    /// Сбрасывает состояние поиска групп.
-    func clearGroupSearch() {
-        groupSearchTask?.cancel()
-        groupSearchTask = nil
-        groupSearchQuery = ""
-        groupSearchPage = 1
-        groupSearchResults = []
-        groupSearchHasMore = false
-        isSearchingGroups = false
+    /// Название института группы — для подписи в списке.
+    func facultyName(for group: Group) -> String? {
+        guard !group.facultyId.isEmpty else { return nil }
+        return faculties.first { $0.id == group.facultyId }?.name
+    }
+
+    /// Группа из справочника по ID (или по названию, если ID изменился).
+    func group(id: String, name: String = "") -> Group? {
+        if let byId = allGroups.first(where: { $0.id == id }) { return byId }
+
+        let trimmedName = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedName.isEmpty else { return nil }
+        return allGroups.first { $0.name.caseInsensitiveCompare(trimmedName) == .orderedSame }
     }
 
     // MARK: - Учебные недели (новый API)
@@ -578,15 +396,6 @@ class ScheduleService: ObservableObject {
     }
 
 
-    /// Возвращает отфильтрованные факультеты по поисковому запросу
-    func filteredFaculties(searchText: String) -> [Faculty] {
-        guard !searchText.isEmpty else { return faculties }
-        
-        return faculties.filter { faculty in
-            faculty.name.localizedCaseInsensitiveContains(searchText)
-        }
-    }
-    
     /// Загружает расписание на неделю для выбранной группы
     func loadWeekSchedule() async {
         guard let group = selectedGroup else {
@@ -711,20 +520,12 @@ class ScheduleService: ObservableObject {
         return "\(startString) - \(endString)"
     }
     
-    /// Обновляет данные - загружает группы и расписание
+    /// Обновляет данные: расписание выбранной группы, иначе — справочник групп.
     func refresh() async {
-        // Если институты ещё не загружены — начинаем с них
-        if !didLoadFaculties {
-            await loadFaculties()
-            return
-        }
-        
-        // Если есть выбранная группа, перезагружаем её расписание
         if selectedGroup != nil {
             await loadWeekSchedule()
-        } else if selectedFaculty != nil {
-            // Иначе загружаем группы для выбранного факультета
-            await loadGroups()
+        } else {
+            await loadGroupDirectory()
         }
     }
 

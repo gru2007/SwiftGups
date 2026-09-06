@@ -42,12 +42,9 @@ struct RegistrationView: View {
     @State private var name: String = ""
     @State private var selectedFaculty: Faculty?
     @State private var selectedGroup: Group?
-    @State private var searchText: String = ""
-    @State private var facultySearchText: String = ""
     @State private var showingProgress = false
     @State private var progressStep = 0
     @State private var errorMessage: String?
-    @State private var skipFacultySelection = false // Пропуск выбора института/факультета
     @State private var skipGroupSelection = false // Пропуск выбора группы при недоступности сайта
     @State private var showingDVGUPSAuth = false
     @State private var lastKnownDVGUPSAuthStatus: DVGUPSAuthStatus = .unknown
@@ -196,23 +193,17 @@ struct RegistrationView: View {
             UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
         }
         .task {
-            await scheduleService.ensureFacultiesLoaded()
+            await scheduleService.ensureGroupDirectoryLoaded()
             await authService.refreshStatusIfNeeded()
             lastKnownDVGUPSAuthStatus = authService.status
-            if selectedFaculty != nil {
-                await scheduleService.loadGroups()
-            }
         }
     }
     
     private var isFormValid: Bool {
-        // Форма валидна, если введено имя,
-        // выбран факультет (или шаг пропущен),
-        // и выбрана группа (или шаг пропущен / факультет пропущен).
+        // Институт больше не выбирается отдельно — он выводится из группы.
         let hasName = !name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-        let hasFaculty = selectedFaculty != nil || skipFacultySelection
-        let hasGroup = selectedGroup != nil || skipGroupSelection || skipFacultySelection
-        return hasName && hasFaculty && hasGroup
+        let hasGroup = selectedGroup != nil || skipGroupSelection
+        return hasName && hasGroup
     }
     
     @ViewBuilder
@@ -227,88 +218,40 @@ struct RegistrationView: View {
                 isFocused: $isNameFieldFocused
             )
             
-            // Выбор факультета
-            if !skipFacultySelection {
-                FacultyPickerView(
-                    selectedFaculty: $selectedFaculty,
-                    searchText: $facultySearchText,
-                    scheduleService: scheduleService
-                )
-
-                Button("Продолжить без выбора института") {
-                    skipFacultySelection = true
-                    selectedFaculty = nil
-                    selectedGroup = nil
-                    skipGroupSelection = true
-                    facultySearchText = ""
-                    searchText = ""
-                    errorMessage = nil
-                }
-                .font(.caption)
-                .foregroundColor(.blue)
-            } else {
-                // Сообщение о пропуске выбора института
+            // Выбор группы: институт выбирать не нужно, справочник общий.
+            if skipGroupSelection {
                 VStack(alignment: .leading, spacing: 8) {
-                    HStack {
-                        Image(systemName: "building.2.fill")
-                            .foregroundColor(.blue)
-                        Text("Институт/Факультет")
-                            .font(.headline)
-                            .foregroundColor(.primary)
-                    }
+                    Label("Группа", systemImage: "person.3.fill")
+                        .font(.headline)
+                        .foregroundStyle(.primary)
 
-                    Text("Выбор института пропущен. Вы сможете выбрать его позже в профиле.")
+                    Text("Выбор группы пропущен. Вы сможете указать её позже в профиле.")
                         .font(.subheadline)
-                        .foregroundColor(.secondary)
-                        .fixedSize(horizontal: false, vertical: true)
-
-                    Button("Выбрать институт") {
-                        skipFacultySelection = false
-                        skipGroupSelection = false
-                    }
-                    .font(.caption)
-                    .foregroundColor(.blue)
-                }
-            }
-            
-            // Выбор группы
-            if selectedFaculty != nil && !skipGroupSelection && !skipFacultySelection {
-                GroupPickerView(
-                    selectedGroup: $selectedGroup,
-                    searchText: $searchText,
-                    scheduleService: scheduleService
-                )
-
-                // Кнопка пропуска выбора группы
-                Button("Сайт недоступен? Продолжить без группы") {
-                    skipGroupSelection = true
-                    selectedGroup = nil
-                    errorMessage = nil
-                }
-                .font(.caption)
-                .foregroundColor(.blue)
-            } else if skipGroupSelection {
-                // Сообщение о пропуске выбора группы
-                VStack(alignment: .leading, spacing: 8) {
-                    HStack {
-                        Image(systemName: "person.3.fill")
-                            .foregroundColor(.blue)
-                        Text("Группа")
-                            .font(.headline)
-                            .foregroundColor(.primary)
-                    }
-
-                    Text("Выбор группы пропущен. Вы сможете выбрать её позже в профиле.")
-                        .font(.subheadline)
-                        .foregroundColor(.secondary)
+                        .foregroundStyle(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
 
                     Button("Выбрать группу") {
                         skipGroupSelection = false
                     }
-                    .font(.caption)
-                    .foregroundColor(.blue)
+                    .font(.subheadline)
+                    .frame(minHeight: 44)
                 }
+            } else {
+                GroupPicker(
+                    scheduleService: scheduleService,
+                    selectedGroupId: selectedGroup?.id
+                ) { group in
+                    selectedGroup = group
+                    selectedFaculty = scheduleService.faculties.first { $0.id == group.facultyId }
+                }
+
+                Button("Сайт недоступен? Продолжить без группы") {
+                    skipGroupSelection = true
+                    selectedGroup = nil
+                    errorMessage = nil
+                }
+                .font(.subheadline)
+                .frame(minHeight: 44)
             }
 
             DVGUPSFirstLaunchHintCard(
@@ -318,7 +261,7 @@ struct RegistrationView: View {
             }
 
             // Сообщение об ошибке
-            if let errorMessage = errorMessage, !skipGroupSelection && !skipFacultySelection {
+            if let errorMessage = errorMessage, !skipGroupSelection {
                 ErrorBanner(message: errorMessage) {
                     self.errorMessage = nil
                 }
@@ -415,34 +358,18 @@ struct RegistrationView: View {
         }
     }
 
+    /// После входа в ЛК справочник может стать полнее — перезагружаем его
+    /// и восстанавливаем выбранную группу по ID.
     private func refreshRegistrationScheduleData() async {
-        let previouslySelectedFacultyId = selectedFaculty?.id
         let previouslySelectedGroupId = selectedGroup?.id
 
-        await scheduleService.loadFaculties()
+        await scheduleService.loadGroupDirectory()
 
-        if let previouslySelectedFacultyId {
-            selectedFaculty = scheduleService.faculties.first(where: { $0.id == previouslySelectedFacultyId })
-        } else {
-            selectedFaculty = nil
-        }
+        guard let previouslySelectedGroupId else { return }
 
-        guard let faculty = selectedFaculty, !skipFacultySelection else {
-            selectedGroup = nil
-            return
-        }
-
-        scheduleService.selectedFaculty = faculty
-        await scheduleService.loadGroups()
-
-        if let previouslySelectedGroupId {
-            selectedGroup = scheduleService.groups.first(where: { $0.id == previouslySelectedGroupId })
-        } else {
-            selectedGroup = nil
-        }
-
-        if selectedGroup == nil && !scheduleService.groups.isEmpty {
-            skipGroupSelection = false
+        selectedGroup = scheduleService.allGroups.first { $0.id == previouslySelectedGroupId }
+        selectedFaculty = selectedGroup.flatMap { group in
+            scheduleService.faculties.first { $0.id == group.facultyId }
         }
     }
 }
@@ -475,203 +402,6 @@ struct CustomTextField: View {
                         .fill(Color(.systemGray6))
                         .stroke(isFocused ? Color.blue : Color.clear, lineWidth: 2)
                 )
-        }
-    }
-}
-
-struct FacultyPickerView: View {
-    @Binding var selectedFaculty: Faculty?
-    @Binding var searchText: String
-    @ObservedObject var scheduleService: ScheduleService
-    @State private var showVPNHint = false
-    @State private var vpnHintTask: Task<Void, Never>?
-    
-    private var filteredFaculties: [Faculty] {
-        scheduleService.filteredFaculties(searchText: searchText)
-    }
-    
-    var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            HStack {
-                Image(systemName: "building.2.fill")
-                    .foregroundColor(.blue)
-                Text("Институт/Факультет")
-                    .font(.headline)
-                    .foregroundColor(.primary)
-            }
-            
-            // Поле поиска
-            SearchBar(text: $searchText, placeholder: "Поиск института...")
-            
-            if scheduleService.isLoadingFaculties {
-                HStack {
-                    Spacer()
-                    VStack(spacing: 10) {
-                        ProgressView("Загрузка институтов...")
-                            .foregroundColor(.secondary)
-                        if showVPNHint {
-                            VPNHintBanner()
-                                .frame(maxWidth: 360)
-                        }
-                    }
-                    Spacer()
-                }
-                .padding()
-            } else if filteredFaculties.isEmpty && !scheduleService.faculties.isEmpty {
-                Text("Институты не найдены")
-                    .foregroundColor(.secondary)
-                    .frame(maxWidth: .infinity, alignment: .center)
-                    .padding()
-            } else if scheduleService.faculties.isEmpty {
-                Text("Нет доступных институтов")
-                    .foregroundColor(.secondary)
-                    .frame(maxWidth: .infinity, alignment: .center)
-                    .padding()
-            } else {
-                // Список институтов — показываем все
-                LazyVGrid(columns: [
-                    GridItem(.flexible()),
-                    GridItem(.flexible())
-                ], spacing: 12) {
-                    ForEach(filteredFaculties) { faculty in
-                        FacultySelectionCard(
-                            faculty: faculty,
-                            isSelected: selectedFaculty?.id == faculty.id
-                        ) {
-                            selectedFaculty = faculty
-                            scheduleService.selectFaculty(faculty)
-                        }
-                    }
-                }
-            }
-            
-            FacultyMissingIdBanner(missingNames: scheduleService.facultiesMissingIDs)
-        }
-        .onAppear {
-            updateVPNHint(isLoading: scheduleService.isLoadingFaculties)
-        }
-        .onChange(of: scheduleService.isLoadingFaculties) { newValue in
-            updateVPNHint(isLoading: newValue)
-        }
-    }
-
-    private func updateVPNHint(isLoading: Bool) {
-        vpnHintTask?.cancel()
-        vpnHintTask = nil
-
-        if !isLoading {
-            withAnimation(.easeInOut(duration: 0.2)) {
-                showVPNHint = false
-            }
-            return
-        }
-
-        vpnHintTask = Task {
-            try? await Task.sleep(nanoseconds: 6_000_000_000)
-            guard !Task.isCancelled else { return }
-            guard scheduleService.isLoadingFaculties else { return }
-            await MainActor.run {
-                withAnimation(.easeInOut(duration: 0.2)) {
-                    showVPNHint = true
-                }
-            }
-        }
-    }
-}
-
-struct GroupPickerView: View {
-    @Binding var selectedGroup: Group?
-    @Binding var searchText: String
-    @ObservedObject var scheduleService: ScheduleService
-    @State private var showVPNHint = false
-    @State private var vpnHintTask: Task<Void, Never>?
-    
-    private var filteredGroups: [Group] {
-        scheduleService.filteredGroups(searchText: searchText)
-    }
-    
-    var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            HStack {
-                Image(systemName: "person.3.fill")
-                    .foregroundColor(.blue)
-                Text("Группа")
-                    .font(.headline)
-                    .foregroundColor(.primary)
-            }
-            
-            // Поле поиска
-            SearchBar(text: $searchText, placeholder: "Поиск группы...")
-            
-            if scheduleService.isLoadingGroups {
-                HStack {
-                    Spacer()
-                    VStack(spacing: 10) {
-                        ProgressView("Загрузка групп...")
-                            .foregroundColor(.secondary)
-                        if showVPNHint {
-                            VPNHintBanner()
-                                .frame(maxWidth: 360)
-                        }
-                    }
-                    Spacer()
-                }
-                .padding()
-            } else if filteredGroups.isEmpty && scheduleService.selectedFaculty != nil {
-                Text("Группы не найдены")
-                    .foregroundColor(.secondary)
-                    .frame(maxWidth: .infinity, alignment: .center)
-                    .padding()
-            } else {
-                // Список групп
-                LazyVGrid(columns: [
-                    GridItem(.flexible()),
-                    GridItem(.flexible())
-                ], spacing: 12) {
-                    ForEach(filteredGroups) { group in
-                        GroupSelectionCard(
-                            group: group,
-                            isSelected: selectedGroup?.id == group.id
-                        ) {
-                            selectedGroup = group
-                        }
-                    }
-                }
-            }
-
-            GroupSearchFooter(scheduleService: scheduleService, searchText: searchText)
-        }
-        .onAppear {
-            updateVPNHint(isLoading: scheduleService.isLoadingGroups)
-        }
-        .onChange(of: scheduleService.isLoadingGroups) { newValue in
-            updateVPNHint(isLoading: newValue)
-        }
-        .onChange(of: searchText) { newValue in
-            scheduleService.searchGroups(query: newValue)
-        }
-    }
-
-    private func updateVPNHint(isLoading: Bool) {
-        vpnHintTask?.cancel()
-        vpnHintTask = nil
-
-        if !isLoading {
-            withAnimation(.easeInOut(duration: 0.2)) {
-                showVPNHint = false
-            }
-            return
-        }
-
-        vpnHintTask = Task {
-            try? await Task.sleep(nanoseconds: 6_000_000_000)
-            guard !Task.isCancelled else { return }
-            guard scheduleService.isLoadingGroups else { return }
-            await MainActor.run {
-                withAnimation(.easeInOut(duration: 0.2)) {
-                    showVPNHint = true
-                }
-            }
         }
     }
 }

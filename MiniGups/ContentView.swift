@@ -48,20 +48,16 @@ struct ContentView: View {
                     VStack(spacing: 18) {
                         MiniHeaderCard()
 
-                        MiniFacultySelectionCard(scheduleService: scheduleService)
-
                         MiniDateSelectionCard(
                             scheduleService: scheduleService,
                             showDatePicker: $showDatePicker,
                             viewMode: $scheduleViewMode
                         )
 
-                        if scheduleService.selectedFaculty != nil {
-                            MiniGroupSelectionCard(
-                                scheduleService: scheduleService,
-                                searchText: $searchText
-                            )
-                        }
+                        MiniGroupSelectionCard(
+                            scheduleService: scheduleService,
+                            searchText: $searchText
+                        )
 
                         MiniScheduleDisplayCard(
                             scheduleService: scheduleService,
@@ -98,10 +94,7 @@ struct ContentView: View {
             SKOverlay.AppConfiguration(appIdentifier: FullAppPromo.appStoreId, position: .bottom)
         }
         .task {
-            await scheduleService.ensureFacultiesLoaded()
-            if scheduleService.selectedFaculty != nil {
-                await scheduleService.loadGroups()
-            }
+            await scheduleService.ensureGroupDirectoryLoaded()
         }
         .onChange(of: scheduleService.currentSchedule?.id) { _ in
             // "Опробовали базу": пользователь хотя бы раз успешно загрузил расписание.
@@ -241,102 +234,6 @@ private struct MiniFullAppPromoBanner: View {
                 .fill(Color(.systemBackground))
                 .shadow(color: .black.opacity(0.06), radius: 8, x: 0, y: 4)
         )
-    }
-}
-
-private struct MiniFacultySelectionCard: View {
-    @ObservedObject var scheduleService: MiniScheduleService
-    @State private var showVPNHint = false
-    @State private var vpnHintTask: Task<Void, Never>?
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            Label("Институт/Факультет", systemImage: "building.2.fill")
-                .font(.headline)
-
-            Menu {
-                if scheduleService.isLoadingFaculties {
-                    Text("Загрузка институтов...")
-                } else if scheduleService.faculties.isEmpty {
-                    Text("Нет доступных институтов")
-                } else {
-                    ForEach(scheduleService.faculties) { faculty in
-                        Button {
-                            scheduleService.selectFaculty(faculty)
-                        } label: {
-                            HStack {
-                                Text(faculty.name)
-                                if scheduleService.selectedFaculty?.id == faculty.id {
-                                    Spacer()
-                                    Image(systemName: "checkmark")
-                                }
-                            }
-                        }
-                    }
-                }
-            } label: {
-                HStack(spacing: 10) {
-                    Text(scheduleService.selectedFaculty?.name ?? (scheduleService.isLoadingFaculties ? "Загрузка..." : "Выберите институт/факультет"))
-                        .foregroundColor(scheduleService.selectedFaculty != nil ? .primary : .secondary)
-                        .lineLimit(2)
-
-                    Spacer()
-
-                    Image(systemName: "chevron.down")
-                        .foregroundColor(.secondary)
-                }
-                .padding(12)
-                .background(
-                    RoundedRectangle(cornerRadius: 12)
-                        .fill(Color(.systemGray6))
-                )
-                .overlay(
-                    RoundedRectangle(cornerRadius: 12)
-                        .stroke(Color(.systemGray4), lineWidth: 1)
-                )
-            }
-
-            if showVPNHint {
-                MiniVPNHintBanner()
-            }
-
-            MiniFacultyMissingIdBanner(missingNames: scheduleService.facultiesMissingIDs)
-        }
-        .padding(16)
-        .background(
-            RoundedRectangle(cornerRadius: 18)
-                .fill(Color(.systemBackground))
-                .shadow(color: .black.opacity(0.06), radius: 8, x: 0, y: 4)
-        )
-        .onAppear {
-            updateVPNHint(isLoading: scheduleService.isLoadingFaculties)
-        }
-        .onChange(of: scheduleService.isLoadingFaculties) { newValue in
-            updateVPNHint(isLoading: newValue)
-        }
-    }
-
-    private func updateVPNHint(isLoading: Bool) {
-        vpnHintTask?.cancel()
-        vpnHintTask = nil
-
-        if !isLoading {
-            withAnimation(.easeInOut(duration: 0.2)) {
-                showVPNHint = false
-            }
-            return
-        }
-
-        vpnHintTask = Task {
-            try? await Task.sleep(nanoseconds: 6_000_000_000)
-            guard !Task.isCancelled else { return }
-            guard scheduleService.isLoadingFaculties else { return }
-            await MainActor.run {
-                withAnimation(.easeInOut(duration: 0.2)) {
-                    showVPNHint = true
-                }
-            }
-        }
     }
 }
 
@@ -527,66 +424,48 @@ private struct MiniDateSelectionCard: View {
 private struct MiniGroupSelectionCard: View {
     @ObservedObject var scheduleService: MiniScheduleService
     @Binding var searchText: String
-    @State private var showVPNHint = false
-    @State private var vpnHintTask: Task<Void, Never>?
 
-    private var filteredGroups: [Group] {
-        scheduleService.filteredGroups(searchText: searchText)
+    /// Справочник — тысячи групп, показываем первые совпадения.
+    private let visibleLimit = 30
+    /// HIG: минимальная область нажатия — 44×44 pt.
+    private let minimumRowHeight: CGFloat = 44
+
+    @State private var facultyFilterId: String?
+
+    private var results: [Group] {
+        scheduleService.filteredGroups(matching: searchText, facultyId: facultyFilterId)
+    }
+
+    private var facultyFilterTitle: String {
+        guard let facultyFilterId,
+              let faculty = scheduleService.faculties.first(where: { $0.id == facultyFilterId })
+        else { return "Все институты" }
+        return faculty.name
     }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            Label("Группа", systemImage: "person.3.fill")
-                .font(.headline)
+            HStack {
+                Label("Группа", systemImage: "person.3.fill")
+                    .font(.headline)
 
-            HStack(spacing: 10) {
-                Image(systemName: "magnifyingglass")
-                    .foregroundColor(.secondary)
+                Spacer()
 
-                TextField("Поиск группы...", text: $searchText)
-                    .textFieldStyle(.roundedBorder)
-
-                if !searchText.isEmpty {
-                    Button("Очистить") { searchText = "" }
+                if !scheduleService.allGroups.isEmpty {
+                    Text("\(scheduleService.allGroups.count)")
                         .font(.caption)
-                        .foregroundColor(.blue)
+                        .foregroundStyle(.secondary)
+                        .accessibilityLabel("Всего групп: \(scheduleService.allGroups.count)")
                 }
             }
 
-            if scheduleService.isLoadingGroups {
-                HStack {
-                    Spacer()
-                    VStack(spacing: 10) {
-                        ProgressView("Загрузка групп...")
-                        if showVPNHint {
-                            MiniVPNHintBanner()
-                                .frame(maxWidth: 340)
-                        }
-                    }
-                    Spacer()
-                }
-                .padding(.vertical, 10)
-            } else if filteredGroups.isEmpty {
-                Text("Группы не найдены")
-                    .font(.subheadline)
-                    .foregroundColor(.secondary)
-                    .frame(maxWidth: .infinity, alignment: .center)
-                    .padding(.vertical, 10)
-            } else {
-                LazyVGrid(
-                    columns: [GridItem(.adaptive(minimum: 160), spacing: 12)],
-                    spacing: 12
-                ) {
-                    ForEach(filteredGroups) { group in
-                        MiniGroupCard(
-                            group: group,
-                            isSelected: scheduleService.selectedGroup?.id == group.id
-                        ) {
-                            scheduleService.selectGroup(group)
-                        }
-                    }
-                }
+            searchField
+
+            if scheduleService.facultiesWithGroups.count > 1 {
+                facultyFilterMenu
             }
+
+            content
         }
         .padding(16)
         .background(
@@ -594,69 +473,165 @@ private struct MiniGroupSelectionCard: View {
                 .fill(Color(.systemBackground))
                 .shadow(color: .black.opacity(0.06), radius: 8, x: 0, y: 4)
         )
-        .onAppear {
-            updateVPNHint(isLoading: scheduleService.isLoadingGroups)
-        }
-        .onChange(of: scheduleService.isLoadingGroups) { newValue in
-            updateVPNHint(isLoading: newValue)
+        .task {
+            await scheduleService.ensureGroupDirectoryLoaded()
         }
     }
 
-    private func updateVPNHint(isLoading: Bool) {
-        vpnHintTask?.cancel()
-        vpnHintTask = nil
+    private var searchField: some View {
+        HStack(spacing: 8) {
+            Image(systemName: "magnifyingglass")
+                .foregroundStyle(.secondary)
 
-        if !isLoading {
-            withAnimation(.easeInOut(duration: 0.2)) {
-                showVPNHint = false
+            TextField("Название группы или специальность", text: $searchText)
+                .textInputAutocapitalization(.never)
+                .autocorrectionDisabled()
+                .submitLabel(.search)
+
+            if !searchText.isEmpty {
+                Button {
+                    searchText = ""
+                } label: {
+                    Image(systemName: "xmark.circle.fill")
+                        .foregroundStyle(.secondary)
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Очистить поиск")
             }
-            return
         }
+        .padding(.horizontal, 12)
+        .frame(minHeight: minimumRowHeight)
+        .background(Color(.systemGray6), in: RoundedRectangle(cornerRadius: 12))
+    }
 
-        vpnHintTask = Task {
-            try? await Task.sleep(nanoseconds: 6_000_000_000)
-            guard !Task.isCancelled else { return }
-            guard scheduleService.isLoadingGroups else { return }
-            await MainActor.run {
-                withAnimation(.easeInOut(duration: 0.2)) {
-                    showVPNHint = true
+    private var facultyFilterMenu: some View {
+        Menu {
+            Picker("Институт", selection: $facultyFilterId) {
+                Text("Все институты").tag(String?.none)
+
+                ForEach(scheduleService.facultiesWithGroups) { faculty in
+                    Text(faculty.name).tag(String?.some(faculty.id))
+                }
+            }
+        } label: {
+            HStack {
+                Image(systemName: "line.3.horizontal.decrease.circle")
+                Text(facultyFilterTitle)
+                    .lineLimit(1)
+                Spacer()
+                Image(systemName: "chevron.up.chevron.down")
+                    .font(.caption2)
+            }
+            .font(.subheadline)
+            .foregroundStyle(facultyFilterId == nil ? Color.secondary : Color.accentColor)
+            .padding(.horizontal, 12)
+            .frame(minHeight: minimumRowHeight)
+            .background(Color(.systemGray6), in: RoundedRectangle(cornerRadius: 12))
+        }
+        .accessibilityLabel("Фильтр по институту")
+    }
+
+    @ViewBuilder
+    private var content: some View {
+        if scheduleService.isLoadingDirectory && scheduleService.allGroups.isEmpty {
+            ProgressView("Загружаем список групп…")
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 20)
+        } else if let error = scheduleService.directoryError, scheduleService.allGroups.isEmpty {
+            VStack(spacing: 12) {
+                Text(error)
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+                    .multilineTextAlignment(.center)
+
+                Button("Повторить") {
+                    Task { await scheduleService.loadGroupDirectory() }
+                }
+                .buttonStyle(.bordered)
+            }
+            .frame(maxWidth: .infinity)
+            .padding(.vertical, 20)
+        } else if results.isEmpty {
+            Text(searchText.isEmpty ? "Список групп пуст" : "Ничего не найдено")
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 20)
+        } else {
+            let shown = Array(results.prefix(visibleLimit))
+
+            VStack(spacing: 8) {
+                ForEach(shown) { group in
+                    MiniGroupRow(
+                        group: group,
+                        facultyName: scheduleService.facultyName(for: group),
+                        isSelected: scheduleService.selectedGroup?.id == group.id,
+                        minimumHeight: minimumRowHeight
+                    ) {
+                        scheduleService.selectGroup(group)
+                    }
+                }
+
+                if results.count > shown.count {
+                    Text("Показаны первые \(shown.count) из \(results.count). Уточните поиск.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(.top, 4)
                 }
             }
         }
     }
 }
 
-private struct MiniGroupCard: View {
+private struct MiniGroupRow: View {
     let group: Group
+    let facultyName: String?
     let isSelected: Bool
+    let minimumHeight: CGFloat
     let action: () -> Void
 
     var body: some View {
         Button(action: action) {
-            VStack(alignment: .leading, spacing: 8) {
-                Text(group.name)
-                    .font(.subheadline)
-                    .fontWeight(.semibold)
-                    .foregroundColor(isSelected ? .white : .primary)
-                    .lineLimit(1)
+            HStack(spacing: 12) {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(group.name)
+                        .font(.subheadline.weight(.semibold))
+                        .foregroundStyle(isSelected ? Color.white : Color.primary)
 
-                Text(group.fullName)
-                    .font(.caption)
-                    .foregroundColor(isSelected ? .white.opacity(0.85) : .secondary)
-                    .lineLimit(2)
+                    if !group.fullName.isEmpty {
+                        Text(group.fullName)
+                            .font(.caption)
+                            .foregroundStyle(isSelected ? Color.white.opacity(0.85) : Color.secondary)
+                            .lineLimit(2)
+                            .multilineTextAlignment(.leading)
+                    }
+
+                    if let facultyName {
+                        Text(facultyName)
+                            .font(.caption2)
+                            .foregroundStyle(isSelected ? Color.white.opacity(0.7) : Color.secondary.opacity(0.8))
+                            .lineLimit(1)
+                    }
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+
+                if isSelected {
+                    Image(systemName: "checkmark.circle.fill")
+                        .foregroundStyle(.white)
+                }
             }
             .padding(12)
-            .frame(maxWidth: .infinity, minHeight: 84, maxHeight: 96, alignment: .leading)
+            .frame(minHeight: minimumHeight)
             .background(
-                RoundedRectangle(cornerRadius: 14)
-                    .fill(isSelected ? Color.blue : Color(.systemGray6))
+                RoundedRectangle(cornerRadius: 12)
+                    .fill(isSelected ? Color.accentColor : Color(.systemGray6))
             )
-            .overlay(
-                RoundedRectangle(cornerRadius: 14)
-                    .stroke(isSelected ? Color.blue.opacity(0.0) : Color(.systemGray4), lineWidth: 1)
-            )
+            .contentShape(RoundedRectangle(cornerRadius: 12))
         }
         .buttonStyle(.plain)
+        .accessibilityElement(children: .combine)
+        .accessibilityAddTraits(isSelected ? [.isButton, .isSelected] : [.isButton])
     }
 }
 
@@ -1343,45 +1318,6 @@ private struct MiniDatePickerSheet: View {
 
 // MARK: - Faculty missing ID banner (copy of main app component)
 
-private struct MiniFacultyMissingIdBanner: View {
-    let missingNames: [String]
-
-    var body: some View {
-        guard !missingNames.isEmpty else { return AnyView(EmptyView()) }
-
-        return AnyView(
-            VStack(alignment: .leading, spacing: 8) {
-                HStack(spacing: 8) {
-                    Image(systemName: "exclamationmark.triangle.fill")
-                        .foregroundColor(.orange)
-                    Text("Некоторые институты не отображаются")
-                        .font(.subheadline)
-                        .fontWeight(.semibold)
-                }
-
-                Text("Сайт ДВГУПС не назначил им ID, поэтому App Clip не может загрузить по ним группы/расписание.")
-                    .font(.caption)
-                    .foregroundColor(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
-
-                Text(missingNames.joined(separator: " • "))
-                    .font(.caption2)
-                    .foregroundColor(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-            .padding(12)
-            .background(
-                RoundedRectangle(cornerRadius: 12)
-                    .fill(Color.orange.opacity(0.08))
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 12)
-                            .stroke(Color.orange.opacity(0.25), lineWidth: 1)
-                    )
-            )
-        )
-    }
-}
-
 // MARK: - Domain models (lightweight copy from main app)
 
 struct Faculty: Codable, Identifiable, Hashable {
@@ -1545,15 +1481,17 @@ struct LessonTime: Identifiable, Codable {
 @MainActor
 final class MiniScheduleService: ObservableObject {
     @Published var faculties: [Faculty] = []
-    @Published var facultiesMissingIDs: [String] = []
     @Published var selectedFaculty: Faculty?
-    @Published var groups: [Group] = []
     @Published var selectedGroup: Group?
     @Published var currentSchedule: Schedule?
     @Published var selectedDate: Date = Date()
 
+    /// Единый справочник групп — по нему идёт выбор, без выбора института.
+    @Published var allGroups: [Group] = []
+    @Published var isLoadingDirectory = false
+    @Published var directoryError: String?
+
     @Published var isLoadingFaculties = false
-    @Published var isLoadingGroups = false
     @Published var isLoadingSchedule = false
 
     @Published var errorMessage: String?
@@ -1582,27 +1520,15 @@ final class MiniScheduleService: ObservableObject {
         do {
             let result = try await apiClient.fetchFaculties()
             faculties = result.faculties
-            facultiesMissingIDs = result.missingIdNames
             didLoadFaculties = true
 
-            if selectedFaculty == nil {
-                // restore from defaults or pick reasonable default
-                let storedFacultyId = defaults.string(forKey: kFacultyId)
-                if let storedFacultyId,
-                   let restored = faculties.first(where: { $0.id == storedFacultyId }) {
-                    selectedFaculty = restored
-                } else {
-                    selectedFaculty = faculties.first(where: { $0.id == "2" }) ?? faculties.first
-                }
-            } else if let selectedFaculty {
+            // Институт следует за выбранной группой, а не наоборот:
+            // умолчания больше нет, только обновление ссылки на объект.
+            if let selectedFaculty {
                 self.selectedFaculty = faculties.first(where: { $0.id == selectedFaculty.id }) ?? selectedFaculty
             }
 
-            if selectedFaculty != nil {
-                await loadGroups()
-            }
         } catch {
-            facultiesMissingIDs = []
             didLoadFaculties = true
             errorMessage = error.localizedDescription
         }
@@ -1610,74 +1536,91 @@ final class MiniScheduleService: ObservableObject {
         isLoadingFaculties = false
     }
 
-    func loadGroups() async {
-        guard let faculty = selectedFaculty else {
-            errorMessage = "Факультет не выбран"
-            return
-        }
-
-        isLoadingGroups = true
-        errorMessage = nil
-
-        do {
-            let fetched = try await apiClient.fetchGroups(for: faculty.id)
-            groups = fetched
-
-            defaults.set(faculty.id, forKey: kFacultyId)
-
-            // Try to restore group if already chosen
-            let storedGroupId = defaults.string(forKey: kGroupId)
-            if let storedGroupId,
-               let restored = groups.first(where: { $0.id == storedGroupId }) {
-                selectedGroup = restored
-                await loadWeekSchedule()
-            } else {
-                selectedGroup = nil
-                currentSchedule = nil
-            }
-
-            if fetched.isEmpty {
-                errorMessage = "Группы для данного факультета не найдены"
-            }
-        } catch {
-            groups = []
-            errorMessage = error.localizedDescription
-        }
-
-        isLoadingGroups = false
-    }
-
-    func selectFaculty(_ faculty: Faculty) {
-        selectedFaculty = faculty
-        selectedGroup = nil
-        currentSchedule = nil
-        groups = []
-        errorMessage = nil
-        isLoadingGroups = true
-        defaults.set(faculty.id, forKey: kFacultyId)
-        defaults.removeObject(forKey: kGroupId)
-        defaults.removeObject(forKey: kGroupName)
-
-        Task { await loadGroups() }
-    }
-
     func selectGroup(_ group: Group) {
         selectedGroup = group
+        selectedFaculty = faculties.first { $0.id == group.facultyId }
         currentSchedule = nil
         errorMessage = nil
         isLoadingSchedule = true
         defaults.set(group.id, forKey: kGroupId)
         defaults.set(group.name, forKey: kGroupName)
+        defaults.set(group.facultyId, forKey: kFacultyId)
 
         Task { await loadWeekSchedule() }
     }
 
-    func filteredGroups(searchText: String) -> [Group] {
-        guard !searchText.isEmpty else { return groups }
-        return groups.filter { g in
-            g.name.localizedCaseInsensitiveContains(searchText) ||
-            g.fullName.localizedCaseInsensitiveContains(searchText)
+    // MARK: - Единый справочник групп
+
+    func ensureGroupDirectoryLoaded() async {
+        guard allGroups.isEmpty, !isLoadingDirectory else { return }
+        await loadGroupDirectory()
+    }
+
+    /// Грузит справочник целиком, чтобы поиск потом шёл локально и мгновенно.
+    func loadGroupDirectory() async {
+        isLoadingDirectory = true
+        directoryError = nil
+        defer { isLoadingDirectory = false }
+
+        await ensureFacultiesLoaded()
+
+        let directory = await apiClient.fetchCombinedGroupDirectory(faculties: faculties)
+
+        guard !directory.isEmpty else {
+            directoryError = "Не удалось загрузить список групп. Проверьте соединение и повторите."
+            return
         }
+
+        allGroups = directory
+
+        // Восстанавливаем ранее выбранную группу.
+        if selectedGroup == nil, let storedGroupId = defaults.string(forKey: kGroupId) {
+            let storedName = defaults.string(forKey: kGroupName) ?? ""
+            if let restored = allGroups.first(where: { $0.id == storedGroupId })
+                ?? allGroups.first(where: { $0.name.caseInsensitiveCompare(storedName) == .orderedSame }) {
+                selectedGroup = restored
+                selectedFaculty = faculties.first { $0.id == restored.facultyId }
+                await loadWeekSchedule()
+            }
+        }
+    }
+
+    /// Поиск по справочнику с необязательным фильтром по институту.
+    ///
+    /// Совпадение по началу названия поднимается наверх: набирая «БОД21»,
+    /// человек ищет группу, а не специальность с такой подстрокой.
+    func filteredGroups(matching searchText: String, facultyId: String? = nil) -> [Group] {
+        var result = allGroups
+
+        if let facultyId, !facultyId.isEmpty {
+            result = result.filter { $0.facultyId == facultyId }
+        }
+
+        let query = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !query.isEmpty else { return result }
+
+        return result
+            .filter { group in
+                group.name.localizedCaseInsensitiveContains(query) ||
+                group.fullName.localizedCaseInsensitiveContains(query)
+            }
+            .sorted { lhs, rhs in
+                let lhsPrefix = lhs.name.lowercased().hasPrefix(query.lowercased())
+                let rhsPrefix = rhs.name.lowercased().hasPrefix(query.lowercased())
+                if lhsPrefix != rhsPrefix { return lhsPrefix }
+                return lhs.name.localizedCompare(rhs.name) == .orderedAscending
+            }
+    }
+
+    /// Институты, у которых в справочнике есть хотя бы одна группа.
+    var facultiesWithGroups: [Faculty] {
+        let ids = Set(allGroups.map { $0.facultyId })
+        return faculties.filter { ids.contains($0.id) }
+    }
+
+    func facultyName(for group: Group) -> String? {
+        guard !group.facultyId.isEmpty else { return nil }
+        return faculties.first { $0.id == group.facultyId }?.name
     }
 
     func selectDate(_ date: Date) {
@@ -1920,6 +1863,49 @@ final class DVGUPSAPIClient: ObservableObject {
         let directory = collected.sorted { $0.name.localizedCompare($1.name) == .orderedAscending }
         cachedGroupDirectory = directory
         return directory
+    }
+
+    /// Единый справочник групп: вуз (новый API) плюс техникумы (старый).
+    ///
+    /// Объединить их может только клиент, а без объединения половина групп
+    /// просто не находится поиском. Метод не бросает: частичный справочник
+    /// полезнее пустого.
+    func fetchCombinedGroupDirectory(faculties: [Faculty]) async -> [Group] {
+        var collected: [Group] = []
+        var seenIds = Set<String>()
+
+        func append(_ groups: [Group]) {
+            for group in groups where seenIds.insert(group.id).inserted {
+                collected.append(group)
+            }
+        }
+
+        let directory = (try? await fetchGroupDirectory()) ?? []
+        append(directory)
+
+        let covered = Set(directory.map { $0.facultyId }.filter { !$0.isEmpty })
+        let legacyFaculties = faculties.filter { !covered.contains($0.id) }
+
+        if !legacyFaculties.isEmpty {
+            let legacy = await withTaskGroup(of: [Group].self) { group in
+                for faculty in legacyFaculties {
+                    group.addTask { [weak self] in
+                        guard let self else { return [] }
+                        return (try? await self.fetchLegacyGroups(for: faculty.id)) ?? []
+                    }
+                }
+
+                var result: [Group] = []
+                for await groups in group {
+                    result.append(contentsOf: groups)
+                }
+                return result
+            }
+
+            append(legacy)
+        }
+
+        return collected.sorted { $0.name.localizedCompare($1.name) == .orderedAscending }
     }
 
     /// Старый эндпоинт групп по факультету (техникумы ассоциации).
